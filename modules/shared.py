@@ -6,8 +6,10 @@ import json
 import datetime
 import contextlib
 import urllib.request
+from types import SimpleNamespace
 from urllib.parse import urlparse
 from enum import Enum
+import requests
 import gradio as gr
 import fasteners
 from rich.console import Console
@@ -43,11 +45,6 @@ hypernetworks = {}
 loaded_hypernetworks = []
 gradio_theme = gr.themes.Base()
 settings_components = None
-pipelines = [
-    'Autodetect',
-    'Stable Diffusion', 'Stable Diffusion XL', 'Kandinsky V1', 'Kandinsky V2', 'DeepFloyd IF', 'Shap-E',
-    'Stable Diffusion Img2Img', 'Stable Diffusion XL Img2Img', 'Kandinsky V1 Img2Img', 'Kandinsky V2 Img2Img', 'DeepFloyd IF Img2Img', 'Shap-E Img2Img'
-]
 latent_upscale_default_mode = "None"
 latent_upscale_modes = {
     "Latent": {"mode": "bilinear", "antialias": False},
@@ -150,9 +147,11 @@ class State:
         self.skipped = False
         self.textinfo = None
         self.time_start = time.time()
+        log.debug(f'State begin: {self.job}')
         devices.torch_gc()
 
     def end(self):
+        log.debug(f'State end: {self.job} time={time.time() - self.time_start:.2f}s')
         self.job = ""
         self.job_count = 0
         self.job_no = 0
@@ -303,17 +302,16 @@ def list_themes():
     builtin = list_builtin_themes()
     default = ["gradio/default", "gradio/base", "gradio/glass", "gradio/monochrome", "gradio/soft"]
     external = {x['id'] for x in res if x['status'] == 'RUNNING' and 'test' not in x['id'].lower()}
-    log.info(f'Themes: builtin={len(builtin)} default={len(default)} external={len(external)}')
+    log.debug(f'Themes: builtin={len(builtin)} default={len(default)} external={len(external)}')
     themes = sorted(builtin) + sorted(default) + sorted(external, key=str.casefold)
     return themes
 
 
 def refresh_themes():
-    import requests
     try:
-        req = requests.get('https://huggingface.co/datasets/freddyaboulton/gradio-theme-subdomains/resolve/main/subdomains.json', timeout=5)
-        if req.status_code == 200:
-            res = req.json()
+        r = req('https://huggingface.co/datasets/freddyaboulton/gradio-theme-subdomains/resolve/main/subdomains.json')
+        if r.status_code == 200:
+            res = r.json()
             fn = os.path.join('html', 'themes.json')
             writefile(res, fn)
             list_themes()
@@ -336,12 +334,13 @@ def readfile(filename, silent=False):
             if not silent:
                 log.debug(f'Reading: {filename} len={len(data)}')
     except Exception as e:
-        log.error(f'Reading failed: {filename} {e}')
+        if not silent:
+            log.error(f'Reading failed: {filename} {e}')
+        return {}
     return data
 
 
 def writefile(data, filename, mode='w', silent=False):
-
     def default(obj):
         log.error(f"Saving: {filename} not a valid object: {obj}")
         return str(obj)
@@ -349,7 +348,16 @@ def writefile(data, filename, mode='w', silent=False):
     try:
         with fasteners.InterProcessLock(f"{filename}.lock"):
             # skipkeys=True, ensure_ascii=True, check_circular=True, allow_nan=True
-            output = json.dumps(data, indent=2, default=default)
+            if type(data) == dict:
+                output = json.dumps(data, indent=2, default=default)
+            elif isinstance(data, object):
+                simple = {}
+                for k in data.__dict__:
+                    if data.__dict__[k] is not None:
+                        simple[k] = data.__dict__[k]
+                output = json.dumps(simple, indent=2, default=default)
+            else:
+                raise ValueError('not a valid object')
             if not silent:
                 log.debug(f'Saving: {filename} len={len(output)}')
             with open(filename, mode, encoding="utf8") as file:
@@ -418,7 +426,10 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
     "opt_channelslast": OptionInfo(False, "Use channels last as torch memory format "),
     "cudnn_benchmark": OptionInfo(False, "Enable full-depth cuDNN benchmark feature"),
     "ipex_optimize": OptionInfo(True if devices.backend == "ipex" else False, "Enable IPEX Optimize for Intel GPUs"),
+    "openvino_multi_gpu": OptionInfo(False, "OpenVINO use Multi GPU"),
+    "openvino_remove_igpu_from_multi": OptionInfo(False, "OpenVINO remove iGPU from Multi GPU"),
     "directml_memory_provider": OptionInfo(default_memory_provider, 'DirectML memory stats provider', gr.Radio, lambda: {"choices": memory_providers}),
+    "torch_gc_threshold": OptionInfo(90, "VRAM usage threshold before running Torch GC to clear up VRAM", gr.Slider, {"minimum": 0, "maximum": 100, "step": 1}),
     "cuda_compile_sep": OptionInfo("<h2>Model Compile</h2>", "", gr.HTML),
     "cuda_compile": OptionInfo(True if cmd_opts.use_openvino else False, "Enable model compile"),
     "cuda_compile_backend": OptionInfo("openvino_fx" if cmd_opts.use_openvino else "none", "Model compile backend", gr.Radio, lambda: {"choices": ['none', 'inductor', 'cudagraphs', 'aot_ts_nvfuser', 'hidet', 'ipex', 'openvino_fx']}),
@@ -430,7 +441,7 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
 }))
 
 options_templates.update(options_section(('diffusers', "Diffusers Settings"), {
-    "diffusers_pipeline": OptionInfo(pipelines[0], 'Diffusers pipeline', gr.Dropdown, lambda: {"choices": pipelines}),
+    "diffusers_pipeline": OptionInfo('Autodetect', 'Diffusers pipeline', gr.Dropdown, lambda: {"choices": list(shared_items.get_pipelines()) }),
     "diffusers_move_base": OptionInfo(True, "Move base model to CPU when using refiner"),
     "diffusers_move_unet": OptionInfo(True, "Move base model to CPU when using VAE"),
     "diffusers_move_refiner": OptionInfo(True, "Move refiner model to CPU when not in use"),
@@ -441,12 +452,13 @@ options_templates.update(options_section(('diffusers', "Diffusers Settings"), {
     "diffusers_vae_upcast": OptionInfo("default", "VAE upcasting", gr.Radio, lambda: {"choices": ['default', 'true', 'false']}),
     "diffusers_vae_slicing": OptionInfo(True, "Enable VAE slicing"),
     "diffusers_vae_tiling": OptionInfo(False if cmd_opts.use_openvino else True, "Enable VAE tiling"),
-    "diffusers_attention_slicing": OptionInfo(True if devices.backend == "ipex" else False, "Enable attention slicing"),
+    "diffusers_attention_slicing": OptionInfo(False, "Enable attention slicing"),
     "diffusers_model_load_variant": OptionInfo("default", "Diffusers model loading variant", gr.Radio, lambda: {"choices": ['default', 'fp32', 'fp16']}),
     "diffusers_vae_load_variant": OptionInfo("default", "Diffusers VAE loading variant", gr.Radio, lambda: {"choices": ['default', 'fp32', 'fp16']}),
     "diffusers_lora_loader": OptionInfo("diffusers" if cmd_opts.use_openvino else "sequential apply", "Diffusers LoRA loading variant", gr.Radio, lambda: {"choices": ['diffusers', 'sequential apply', 'merge and apply']}),
     "diffusers_force_zeros": OptionInfo(True, "Force zeros for prompts when empty"),
     "diffusers_aesthetics_score": OptionInfo(False, "Require aesthetics score"),
+    "diffusers_force_inpaint": OptionInfo(False, 'Diffusers force inpaint pipeline'),
 }))
 
 options_templates.update(options_section(('system-paths', "System Paths"), {
@@ -466,7 +478,7 @@ options_templates.update(options_section(('system-paths', "System Paths"), {
     "esrgan_models_path": OptionInfo(os.path.join(paths.models_path, 'ESRGAN'), "Folder with ESRGAN models", folder=True),
     "bsrgan_models_path": OptionInfo(os.path.join(paths.models_path, 'BSRGAN'), "Folder with BSRGAN models", folder=True),
     "realesrgan_models_path": OptionInfo(os.path.join(paths.models_path, 'RealESRGAN'), "Folder with RealESRGAN models", folder=True),
-    "scunet_models_path": OptionInfo(os.path.join(paths.models_path, 'ScuNET'), "Folder with ScuNET models", folder=True),
+    "scunet_models_path": OptionInfo(os.path.join(paths.models_path, 'SCUNet'), "Folder with SCUNet models", folder=True),
     "swinir_models_path": OptionInfo(os.path.join(paths.models_path, 'SwinIR'), "Folder with SwinIR models", folder=True),
     "ldsr_models_path": OptionInfo(os.path.join(paths.models_path, 'LDSR'), "Folder with LDSR models", folder=True),
     "clip_models_path": OptionInfo(os.path.join(paths.models_path, 'CLIP'), "Folder with CLIP models", folder=True),
@@ -506,7 +518,7 @@ options_templates.update(options_section(('saving-paths', "Image Naming & Paths"
     "saving_sep_images": OptionInfo("<h2>Images</h2>", "", gr.HTML),
     "save_images_add_number": OptionInfo(True, "Add number to filename when saving", component_args=hide_dirs),
     "use_original_name_batch": OptionInfo(True, "Use original name for output filename during batch process"),
-    "use_upscaler_name_as_suffix": OptionInfo(True, "Use upscaler name as filename suffix in the extras tab"),
+    "use_upscaler_name_as_suffix": OptionInfo(True, "Use upscaler name as filename suffix in the extras tab", gr.Checkbox, {"visible": False}),
     "samples_filename_pattern": OptionInfo("[seq]-[prompt_words]", "Images filename pattern", component_args=hide_dirs),
 
     "outdir_sep_dirs": OptionInfo("<h2>Directories</h2>", "", gr.HTML),
@@ -562,35 +574,43 @@ options_templates.update(options_section(('live-preview', "Live Previews"), {
 }))
 
 options_templates.update(options_section(('sampler-params', "Sampler Settings"), {
-    "show_samplers": OptionInfo(["Default", "Euler a", "UniPC", "DEIS", "DDIM", "DPM 1S", "DPM 2M", "DPM SDE", "DPM++ 2M SDE", "DPM++ 2M SDE Karras", "DPM2 Karras", "DPM++ 2M Karras"], "Show samplers in user interface", gr.CheckboxGroup, lambda: {"choices": [x.name for x in list_samplers() if x.name != "PLMS"]}),
-    'uni_pc_variant': OptionInfo("bh1", "UniPC variant", gr.Radio, {"choices": ["bh1", "bh2", "vary_coeff"]}),
-    'uni_pc_skip_type': OptionInfo("time_uniform", "UniPC skip type", gr.Radio, {"choices": ["time_uniform", "time_quadratic", "logSNR"]}),
+    "show_samplers": OptionInfo([], "Show samplers in user interface", gr.CheckboxGroup, lambda: {"choices": [x.name for x in list_samplers()]}),
     'eta_noise_seed_delta': OptionInfo(0, "Noise seed delta (eta)", gr.Number, {"precision": 0}),
-    "eta_ddim": OptionInfo(0.0, "Noise multiplier for DDIM (eta)", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
-    "schedulers_solver_order": OptionInfo(2, "Samplers solver order where applicable", gr.Slider, {"minimum": 1, "maximum": 5, "step": 1}),
+    "scheduler_eta": OptionInfo(1.0, "Noise multiplier (eta)", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
+    "schedulers_solver_order": OptionInfo(2, "Solver order (where applicable)", gr.Slider, {"minimum": 1, "maximum": 5, "step": 1}),
+
+    # managed from ui.py for backend original
+    "schedulers_brownian_noise": OptionInfo(True, "Use Brownian noise", gr.Checkbox, {"visible": False}),
+    "schedulers_discard_penultimate": OptionInfo(True, "Discard penultimate sigma", gr.Checkbox, {"visible": False}),
+    "schedulers_sigma": OptionInfo("default", "Sigma algorithm", gr.Radio, {"choices": ['default', 'karras', 'exponential', 'polyexponential'], "visible": False}),
+    # managed from ui.py for backend diffusers
+    "schedulers_use_karras": OptionInfo(True, "Use Karras sigmas", gr.Checkbox, {"visible": False}),
+    "schedulers_use_thresholding": OptionInfo(False, "Use dynamic thresholding", gr.Checkbox, {"visible": False}),
+    "schedulers_use_loworder": OptionInfo(True, "Use simplified solvers in final steps", gr.Checkbox, {"visible": False}),
+    "schedulers_prediction_type": OptionInfo("default", "Override model prediction type", gr.Radio, lambda: {"choices": ['default', 'epsilon', 'sample', 'v-prediction'], "visible": False}),
 
     "schedulers_sep_diffusers": OptionInfo("<h2>Diffusers specific config</h2>", "", gr.HTML),
-    "schedulers_prediction_type": OptionInfo("default", "Samplers override model prediction type", gr.Radio, lambda: {"choices": ['default', 'epsilon', 'sample', 'v-prediction']}),
-    "schedulers_use_karras": OptionInfo(True, "Samplers use Karras sigmas where applicable"),
-    "schedulers_use_loworder": OptionInfo(True, "Samplers use simplified solvers in final steps where applicable"),
-    "schedulers_use_thresholding": OptionInfo(False, "Samplers use dynamic thresholding where applicable"),
-    "schedulers_dpm_solver": OptionInfo("sde-dpmsolver++", "Samplers DPM solver algorithm", gr.Radio, lambda: {"choices": ['dpmsolver', 'dpmsolver++', 'sde-dpmsolver', 'sde-dpmsolver++']}),
-    "schedulers_beta_schedule": OptionInfo("default", "Samplers override beta schedule", gr.Radio, lambda: {"choices": ['default', 'linear', 'scaled_linear', 'squaredcos_cap_v2']}),
-    'schedulers_beta_start': OptionInfo(0, "Samplers override beta start", gr.Number, {}),
-    'schedulers_beta_end': OptionInfo(0, "Samplers override beta end", gr.Number, {}),
+    "schedulers_dpm_solver": OptionInfo("sde-dpmsolver++", "DPM solver algorithm", gr.Radio, lambda: {"choices": ['dpmsolver', 'dpmsolver++', 'sde-dpmsolver', 'sde-dpmsolver++']}),
+    "schedulers_beta_schedule": OptionInfo("default", "Override beta schedule", gr.Radio, lambda: {"choices": ['default', 'linear', 'scaled_linear', 'squaredcos_cap_v2']}),
+    'schedulers_beta_start': OptionInfo(0, "Override beta start", gr.Number, {}),
+    'schedulers_beta_end': OptionInfo(0, "Override beta end", gr.Number, {}),
 
     "schedulers_sep_kdiffusers": OptionInfo("<h2>K-Diffusion specific config</h2>", "", gr.HTML),
     "always_batch_cond_uncond": OptionInfo(False, "Disable conditional batching enabled on low memory systems"),
-    "enable_quantization": OptionInfo(True, "Enable samplers quantization for sharper and cleaner results"),
-    "eta_ancestral": OptionInfo(1.0, "Noise multiplier for ancestral samplers (eta)", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
-    's_churn': OptionInfo(0.0, "sigma churn", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
-    's_min_uncond': OptionInfo(0.0, "sigma negative guidance minimum ", gr.Slider, {"minimum": 0.0, "maximum": 4.0, "step": 0.01}),
-    's_tmin':  OptionInfo(0.0, "sigma tmin",  gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
-    's_noise': OptionInfo(1.0, "sigma noise", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
-    'always_discard_next_to_last_sigma': OptionInfo(False, "Always discard next-to-last sigma"),
-    'never_discard_next_to_last_sigma': OptionInfo(False, "Never discard next-to-last sigma"),
+    "enable_quantization": OptionInfo(True, "Enable quantization for sharper and cleaner results"),
+    's_churn': OptionInfo(0.0, "Sigma churn", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
+    's_min_uncond': OptionInfo(0.0, "Sigma negative guidance minimum ", gr.Slider, {"minimum": 0.0, "maximum": 4.0, "step": 0.01}),
+    's_tmin':  OptionInfo(0.0, "Sigma tmin",  gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
+    's_noise': OptionInfo(1.0, "Sigma noise", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
+    's_min':  OptionInfo(0.0, "Sigma min",  gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
+    's_max':  OptionInfo(0.0, "Sigma max",  gr.Slider, {"minimum": 0.0, "maximum": 100.0, "step": 1.0}),
+    # 'discard_next_to_last_sigma': OptionInfo("default", "Discard penultimate sigma", gr.Radio, lambda: {"choices": ['default', 'always', 'never']}),
+    # 'always_discard_next_to_last_sigma': OptionInfo(False, "Always discard next-to-last sigma"),
+    # 'never_discard_next_to_last_sigma': OptionInfo(False, "Never discard next-to-last sigma"),
 
     "schedulers_sep_compvis": OptionInfo("<h2>CompVis specific config</h2>", "", gr.HTML),
+    'uni_pc_variant': OptionInfo("bh1", "UniPC variant", gr.Radio, {"choices": ["bh1", "bh2", "vary_coeff"]}),
+    'uni_pc_skip_type': OptionInfo("time_uniform", "UniPC skip type", gr.Radio, {"choices": ["time_uniform", "time_quadratic", "logSNR"]}),
     "ddim_discretize": OptionInfo('uniform', "DDIM discretize img2img", gr.Radio, {"choices": ['uniform', 'quad']}),
 }))
 
@@ -611,13 +631,11 @@ options_templates.update(options_section(('postprocessing', "Postprocessing"), {
     "face_restoration_unload": OptionInfo(False, "Move face restoration model from VRAM into RAM after processing"),
 
     "postprocessing_sep_upscalers": OptionInfo("<h2>Upscaling</h2>", "", gr.HTML),
-    'upscaling_max_images_in_cache': OptionInfo(5, "Maximum number of images in upscaling cache", gr.Slider, {"minimum": 0, "maximum": 10, "step": 1}),
+    "upscaler_unload": OptionInfo(False, "Unload upscaler after processing"),
+    # 'upscaling_max_images_in_cache': OptionInfo(5, "Maximum number of images in upscaling cache", gr.Slider, {"minimum": 0, "maximum": 10, "step": 1, "visible": False}),
     "upscaler_for_img2img": OptionInfo("None", "Default upscaler for image resize operations", gr.Dropdown, lambda: {"choices": [x.name for x in sd_upscalers]}),
-    # "realesrgan_enabled_models": OptionInfo(["R-ESRGAN 4x+", "R-ESRGAN 4x+ Anime6B"], "Real-ESRGAN available models", gr.CheckboxGroup, lambda: {"choices": shared_items.realesrgan_models_names()}),
-    "ESRGAN_tile": OptionInfo(192, "Tile size for ESRGAN upscalers", gr.Slider, {"minimum": 0, "maximum": 512, "step": 16}),
-    "ESRGAN_tile_overlap": OptionInfo(8, "Tile overlap in pixels for ESRGAN upscalers", gr.Slider, {"minimum": 0, "maximum": 48, "step": 1}),
-    "SCUNET_tile": OptionInfo(256, "Tile size for SCUNET upscalers", gr.Slider, {"minimum": 0, "maximum": 512, "step": 16}),
-    "SCUNET_tile_overlap": OptionInfo(8, "Tile overlap for SCUNET upscalers", gr.Slider, {"minimum": 0, "maximum": 64, "step": 1}),
+    "upscaler_tile_size": OptionInfo(192, "Upscaler tile size", gr.Slider, {"minimum": 0, "maximum": 512, "step": 16}),
+    "upscaler_tile_overlap": OptionInfo(8, "Upscaler tile overlap", gr.Slider, {"minimum": 0, "maximum": 64, "step": 1}),
 }))
 
 options_templates.update(options_section(('training', "Training"), {
@@ -655,14 +673,13 @@ options_templates.update(options_section(('extra_networks', "Extra Networks"), {
     "extra_networks_card_cover": OptionInfo("sidebar", "UI position", gr.Radio, lambda: {"choices": ["cover", "inline", "sidebar"]}),
     "extra_networks_height": OptionInfo(53, "UI height (%)", gr.Slider, {"minimum": 10, "maximum": 100, "step": 1}),
     "extra_networks_sidebar_width": OptionInfo(35, "UI sidebar width (%)", gr.Slider, {"minimum": 10, "maximum": 80, "step": 1}),
-    "extra_networks_card_lazy": OptionInfo(True, "UI card preview lazy loading", gr.Checkbox, { "visible": False }),
     "extra_networks_card_size": OptionInfo(160, "UI card size (px)", gr.Slider, {"minimum": 20, "maximum": 2000, "step": 1}),
     "extra_networks_card_square": OptionInfo(True, "UI disable variable aspect ratio"),
     "extra_networks_card_fit": OptionInfo("cover", "UI image contain method", gr.Radio, lambda: {"choices": ["contain", "cover", "fill"], "visible": False}),
     "extra_network_skip_indexing": OptionInfo(False, "Do not automatically build extra network pages", gr.Checkbox),
     "lyco_patch_lora": OptionInfo(False, "Use LyCoris handler for all LoRA types", gr.Checkbox),
     "lora_functional": OptionInfo(False, "Use Kohya method for handling multiple LoRA", gr.Checkbox, { "visible": False }),
-    "extra_networks_default_multiplier": OptionInfo(1.0, "Multiplier for extra networks", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01, "visible": False}),
+    "extra_networks_default_multiplier": OptionInfo(1.0, "Multiplier for extra networks", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
     "sd_hypernetwork": OptionInfo("None", "Add hypernetwork to prompt", gr.Dropdown, lambda: { "choices": ["None"] + list(hypernetworks.keys()), "visible": False }, refresh=reload_hypernetworks),
 }))
 
@@ -835,9 +852,8 @@ if cmd_opts.backend is None:
 else:
     backend = Backend.DIFFUSERS if cmd_opts.use_openvino or cmd_opts.backend.lower() == 'diffusers' else Backend.ORIGINAL
 opts.data['sd_backend'] = 'diffusers' if backend == Backend.DIFFUSERS else 'original'
-opts.data['uni_pc_lower_order_final'] = opts.schedulers_use_loworder
-opts.data['uni_pc_order'] = opts.schedulers_solver_order
-# opts.data['diffusers_lora_loader'] = 'diffusers' # TODO broken in diffusers=0.21
+opts.data['uni_pc_lower_order_final'] = opts.schedulers_use_loworder # compatibility
+opts.data['uni_pc_order'] = opts.schedulers_solver_order # compatibility
 log.info(f'Engine: backend={backend} compute={devices.backend} mode={devices.inference_context.__name__} device={devices.get_optimal_device_name()}')
 log.info(f'Device: {print_dict(devices.get_gpu_info())}')
 
@@ -859,8 +875,8 @@ def reload_gradio_theme(theme_name=None):
     default_font_params = {}
     res = 0
     try:
-        req = urllib.request.Request("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono", method="HEAD")
-        res = urllib.request.urlopen(req, timeout=3.0).status # pylint: disable=consider-using-with
+        request = urllib.request.Request("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono", method="HEAD")
+        res = urllib.request.urlopen(request, timeout=3.0).status # pylint: disable=consider-using-with
     except Exception:
         res = 0
     if res != 200:
@@ -990,6 +1006,16 @@ def get_version():
             version = { 'app': 'sd.next' }
     return version
 
+
+def req(url_addr, **kwargs):
+    headers = { 'Content-type': 'application/json' }
+    try:
+        res = requests.get(url_addr, timeout=30, headers=headers, verify=False, allow_redirects=True, **kwargs)
+    except Exception as e:
+        log.error(f'HTTP request error: url={url} {e}')
+        res = { 'status_code': 500, 'text': f'HTTP request error: url={url} {e}' }
+        res = SimpleNamespace(**res)
+    return res
 
 class Shared(sys.modules[__name__].__class__): # this class is here to provide sd_model field as a property, so that it can be created and loaded on demand rather than at program startup.
     @property

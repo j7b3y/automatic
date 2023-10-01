@@ -5,6 +5,7 @@ import threading
 import cv2
 import numpy as np
 import torch
+from torch import nn
 from torch.nn import functional as F
 from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TimeElapsedColumn
 from modules.shared import log, console
@@ -28,6 +29,7 @@ class RealESRGANer():
     """
 
     def __init__(self,
+                 name,
                  scale,
                  model_path,
                  dni_weight=None,
@@ -38,6 +40,7 @@ class RealESRGANer():
                  half=False,
                  device=None,
                  gpu_id=None):
+        self.name = name
         self.scale = scale
         self.tile_size = tile
         self.tile_pad = tile_pad
@@ -62,6 +65,7 @@ class RealESRGANer():
                 from modules.modelloader import load_file_from_url
                 model_path = load_file_from_url(url=model_path, model_dir=os.path.join(ROOT_DIR, 'weights'), progress=True, file_name=None)
             loadnet = torch.load(model_path, map_location=torch.device('cpu'))
+            log.info(f"Upscaler loaded: type={self.name} model={model_path}")
 
         # prefer to use params_ema
         if 'params_ema' in loadnet:
@@ -312,10 +316,6 @@ class IOConsumer(threading.Thread):
             output = msg['output']
             save_path = msg['save_path']
             cv2.imwrite(save_path, output)
-
-from basicsr.utils.registry import ARCH_REGISTRY
-from torch import nn as nn
-from torch.nn import functional as F # noqa
 
 
 class SRVGGNetCompact(nn.Module):

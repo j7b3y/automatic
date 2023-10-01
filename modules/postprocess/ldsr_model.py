@@ -3,10 +3,10 @@ import sys
 import traceback
 
 from modules.upscaler import Upscaler, UpscalerData
-from ldsr_model_arch import LDSR
+from modules.ldsr.ldsr_model_arch import LDSR
 from modules import shared, script_callbacks
-import sd_hijack_autoencoder  # noqa: F401
-import sd_hijack_ddpm_v1  # noqa: F401
+import modules.ldsr.sd_hijack_autoencoder # pylint: disable=unused-import
+import modules.ldsr.sd_hijack_ddpm_v1 # pylint: disable=unused-import
 
 
 class UpscalerLDSR(Upscaler):
@@ -56,8 +56,8 @@ class UpscalerLDSR(Upscaler):
             print(traceback.format_exc(), file=sys.stderr)
         return None
 
-    def do_upscale(self, img, path):
-        ldsr = self.load_model(path)
+    def do_upscale(self, img, selected_model):
+        ldsr = self.load_model(selected_model)
         if ldsr is None:
             print("NO LDSR!")
             return img
@@ -67,9 +67,6 @@ class UpscalerLDSR(Upscaler):
 
 def on_ui_settings():
     import gradio as gr
-
-    shared.opts.add_option("ldsr_steps", shared.OptionInfo(100, "LDSR processing steps. Lower = faster", gr.Slider, {"minimum": 1, "maximum": 200, "step": 1}, section=('postprocessing', "Postprocessing")))
-    shared.opts.add_option("ldsr_cached", shared.OptionInfo(False, "Cache LDSR model in memory", gr.Checkbox, {"interactive": True}, section=('postprocessing', "Postprocessing")))
-
+    shared.opts.add_option("ldsr_steps", shared.OptionInfo(100, "LDSR processing steps", gr.Slider, {"minimum": 1, "maximum": 200, "step": 1}, section=('postprocessing', "Postprocessing")))
 
 script_callbacks.on_ui_settings(on_ui_settings)

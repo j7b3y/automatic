@@ -1,8 +1,13 @@
-# This script is copied from the compvis/stable-diffusion repo (aka the SD V1 repo)
-# Original filename: ldm/models/diffusion/ddpm.py
-# The purpose to reinstate the old DDPM logic which works with VQ, whereas the V2 one doesn't
-# Some models such as LDSR require VQ to work correctly
-# The classes are suffixed with "V1" and added back to the "ldm.models.diffusion.ddpm" module
+"""
+wild mixture of
+https://github.com/lucidrains/denoising-diffusion-pytorch/blob/7706bdfc6f527f58d33f84b7b522e61e6e3164b3/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py
+https://github.com/openai/improved-diffusion/blob/e94489283bb876ac1477d5dd7709bbbd2d9902ce/improved_diffusion/gaussian_diffusion.py
+https://github.com/CompVis/taming-transformers
+-- merci
+"""
+
+# File modified by authors of InstructPix2Pix from original (https://github.com/CompVis/stable-diffusion).
+# See more details in LICENSE.
 
 import torch
 import torch.nn as nn
@@ -23,7 +28,6 @@ from ldm.models.autoencoder import VQModelInterface, IdentityFirstStage, Autoenc
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
 from ldm.models.diffusion.ddim import DDIMSampler
 
-import ldm.models.diffusion.ddpm
 
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
@@ -40,7 +44,7 @@ def uniform_on_device(r1, r2, shape, device):
     return (r1 - r2) * torch.rand(*shape, device=device) + r2
 
 
-class DDPMV1(pl.LightningModule):
+class DDPM(pl.LightningModule):
     # classic DDPM with Gaussian diffusion, in image space
     def __init__(self,
                  unet_config,
@@ -70,6 +74,7 @@ class DDPMV1(pl.LightningModule):
                  use_positional_encodings=False,
                  learn_logvar=False,
                  logvar_init=0.,
+                 load_ema=True,
                  ):
         super().__init__()
         assert parameterization in ["eps", "x0"], 'currently only supporting "eps" and "x0"'
@@ -82,12 +87,9 @@ class DDPMV1(pl.LightningModule):
         self.image_size = image_size  # try conv?
         self.channels = channels
         self.use_positional_encodings = use_positional_encodings
-        self.model = DiffusionWrapperV1(unet_config, conditioning_key)
+        self.model = DiffusionWrapper(unet_config, conditioning_key)
         count_params(self.model, verbose=True)
         self.use_ema = use_ema
-        if self.use_ema:
-            self.model_ema = LitEma(self.model)
-            print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
 
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
@@ -99,8 +101,18 @@ class DDPMV1(pl.LightningModule):
 
         if monitor is not None:
             self.monitor = monitor
+
+        if self.use_ema and load_ema:
+            self.model_ema = LitEma(self.model)
+            print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
+
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys or [], only_model=load_only_unet)
+
+            # If initialing from EMA-only checkpoint, create EMA model after loading.
+            if self.use_ema and not load_ema:
+                self.model_ema = LitEma(self.model)
+                print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
 
         self.register_schedule(given_betas=given_betas, beta_schedule=beta_schedule, timesteps=timesteps,
                                linear_start=linear_start, linear_end=linear_end, cosine_s=cosine_s)
@@ -182,14 +194,36 @@ class DDPMV1(pl.LightningModule):
                     print(f"{context}: Restored training weights")
 
     def init_from_ckpt(self, path, ignore_keys=None, only_model=False):
+        ignore_keys = ignore_keys or []
         sd = torch.load(path, map_location="cpu")
         if "state_dict" in list(sd.keys()):
             sd = sd["state_dict"]
         keys = list(sd.keys())
+
+        # Our model adds additional channels to the first layer to condition on an input image.
+        # For the first layer, copy existing channel weights and initialize new channel weights to zero.
+        input_keys = [
+            "model.diffusion_model.input_blocks.0.0.weight",
+            "model_ema.diffusion_modelinput_blocks00weight",
+        ]
+
+        self_sd = self.state_dict()
+        for input_key in input_keys:
+            if input_key not in sd or input_key not in self_sd:
+                continue
+
+            input_weight = self_sd[input_key]
+
+            if input_weight.size() != sd[input_key].size():
+                print(f"Manual init: {input_key}")
+                input_weight.zero_()
+                input_weight[:, :4, :, :].copy_(sd[input_key])
+                ignore_keys.append(input_key)
+
         for k in keys:
-            for ik in ignore_keys or []:
+            for ik in ignore_keys:
                 if k.startswith(ik):
-                    print("Deleting key {} from state_dict.".format(k))
+                    print(f"Deleting key {k} from state_dict.")
                     del sd[k]
         missing, unexpected = self.load_state_dict(sd, strict=False) if not only_model else self.model.load_state_dict(
             sd, strict=False)
@@ -325,12 +359,7 @@ class DDPMV1(pl.LightningModule):
         return self.p_losses(x, t, *args, **kwargs)
 
     def get_input(self, batch, k):
-        x = batch[k]
-        if len(x.shape) == 3:
-            x = x[..., None]
-        x = rearrange(x, 'b h w c -> b c h w')
-        x = x.to(memory_format=torch.contiguous_format).float()
-        return x
+        return batch[k]
 
     def shared_step(self, batch):
         x = self.get_input(batch, self.first_stage_key)
@@ -357,7 +386,7 @@ class DDPMV1(pl.LightningModule):
         _, loss_dict_no_ema = self.shared_step(batch)
         with self.ema_scope():
             _, loss_dict_ema = self.shared_step(batch)
-            loss_dict_ema = {key + '_ema': loss_dict_ema[key] for key in loss_dict_ema}
+            loss_dict_ema = {f"{key}_ema": loss_dict_ema[key] for key in loss_dict_ema}
         self.log_dict(loss_dict_no_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
         self.log_dict(loss_dict_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
 
@@ -419,7 +448,7 @@ class DDPMV1(pl.LightningModule):
         return opt
 
 
-class LatentDiffusionV1(DDPMV1):
+class LatentDiffusion(DDPM):
     """main class"""
     def __init__(self,
                  first_stage_config,
@@ -432,6 +461,7 @@ class LatentDiffusionV1(DDPMV1):
                  conditioning_key=None,
                  scale_factor=1.0,
                  scale_by_std=False,
+                 load_ema=True,
                  *args, **kwargs):
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
@@ -443,7 +473,7 @@ class LatentDiffusionV1(DDPMV1):
             conditioning_key = None
         ckpt_path = kwargs.pop("ckpt_path", None)
         ignore_keys = kwargs.pop("ignore_keys", [])
-        super().__init__(*args, conditioning_key=conditioning_key, **kwargs)
+        super().__init__(*args, conditioning_key=conditioning_key, load_ema=load_ema, **kwargs)
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
@@ -465,6 +495,10 @@ class LatentDiffusionV1(DDPMV1):
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
+
+            if self.use_ema and not load_ema:
+                self.model_ema = LitEma(self.model)
+                print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
 
     def make_cond_schedule(self, ):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
@@ -596,7 +630,7 @@ class LatentDiffusionV1(DDPMV1):
             weighting = weighting * L_weighting
         return weighting
 
-    def get_fold_unfold(self, x, kernel_size, stride, uf=1, df=1):  # todo load once not every time, shorten code
+    def get_fold_unfold(self, x, kernel_size, stride, uf=1, df=1):
         """
         :param x: img of size (bs, c, h, w)
         :return: n img crops of size (n, bs, c, kernel_size[0], kernel_size[1])
@@ -650,49 +684,30 @@ class LatentDiffusionV1(DDPMV1):
 
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
-                  cond_key=None, return_original_cond=False, bs=None):
+                  cond_key=None, return_original_cond=False, bs=None, uncond=0.05):
         x = super().get_input(batch, k)
         if bs is not None:
             x = x[:bs]
         x = x.to(self.device)
         encoder_posterior = self.encode_first_stage(x)
         z = self.get_first_stage_encoding(encoder_posterior).detach()
+        cond_key = cond_key or self.cond_stage_key
+        xc = super().get_input(batch, cond_key)
+        if bs is not None:
+            xc["c_crossattn"] = xc["c_crossattn"][:bs]
+            xc["c_concat"] = xc["c_concat"][:bs]
+        cond = {}
 
-        if self.model.conditioning_key is not None:
-            if cond_key is None:
-                cond_key = self.cond_stage_key
-            if cond_key != self.first_stage_key:
-                if cond_key in ['caption', 'coordinates_bbox']:
-                    xc = batch[cond_key]
-                elif cond_key == 'class_label':
-                    xc = batch
-                else:
-                    xc = super().get_input(batch, cond_key).to(self.device)
-            else:
-                xc = x
-            if not self.cond_stage_trainable or force_c_encode:
-                if isinstance(xc, dict) or isinstance(xc, list):
-                    # import pudb; pudb.set_trace()
-                    c = self.get_learned_conditioning(xc)
-                else:
-                    c = self.get_learned_conditioning(xc.to(self.device))
-            else:
-                c = xc
-            if bs is not None:
-                c = c[:bs]
+        # To support classifier-free guidance, randomly drop out only text conditioning 5%, only image conditioning 5%, and both 5%.
+        random = torch.rand(x.size(0), device=x.device)
+        prompt_mask = rearrange(random < 2 * uncond, "n -> n 1 1")
+        input_mask = 1 - rearrange((random >= uncond).float() * (random < 3 * uncond).float(), "n -> n 1 1 1")
 
-            if self.use_positional_encodings:
-                pos_x, pos_y = self.compute_latent_shifts(batch)
-                ckey = __conditioning_keys__[self.model.conditioning_key]
-                c = {ckey: c, 'pos_x': pos_x, 'pos_y': pos_y}
+        null_prompt = self.get_learned_conditioning([""])
+        cond["c_crossattn"] = [torch.where(prompt_mask, null_prompt, self.get_learned_conditioning(xc["c_crossattn"]).detach())]
+        cond["c_concat"] = [input_mask * self.encode_first_stage((xc["c_concat"].to(self.device))).mode().detach()]
 
-        else:
-            c = None
-            xc = None
-            if self.use_positional_encodings:
-                pos_x, pos_y = self.compute_latent_shifts(batch)
-                c = {'pos_x': pos_x, 'pos_y': pos_y}
-        out = [z, c]
+        out = [z, cond]
         if return_first_stage_outputs:
             xrec = self.decode_first_stage(z)
             out.extend([x, xrec])
@@ -903,7 +918,7 @@ class LatentDiffusionV1(DDPMV1):
             z_list = [z[:, :, :, :, i] for i in range(z.shape[-1])]
 
             if self.cond_stage_key in ["image", "LR_image", "segmentation",
-                                       'bbox_img'] and self.model.conditioning_key:  # todo check for completeness
+                                       'bbox_img'] and self.model.conditioning_key:
                 c_key = next(iter(cond.keys()))  # get key
                 c = next(iter(cond.values()))  # get value
                 assert (len(c) == 1)  # todo extend to list with more than one elem
@@ -961,8 +976,7 @@ class LatentDiffusionV1(DDPMV1):
 
             # apply model by loop over crops
             output_list = [self.model(z_list[i], t, **cond_list[i]) for i in range(z.shape[-1])]
-            assert not isinstance(output_list[0],
-                                  tuple)  # todo cant deal with multiple model outputs check this never happens
+            assert not isinstance(output_list[0], tuple)
 
             o = torch.stack(output_list, axis=-1)
             o = o * weighting
@@ -1010,7 +1024,7 @@ class LatentDiffusionV1(DDPMV1):
         elif self.parameterization == "eps":
             target = noise
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
         loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
@@ -1049,7 +1063,7 @@ class LatentDiffusionV1(DDPMV1):
         elif self.parameterization == "x0":
             x_recon = model_out
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
         if clip_denoised:
             x_recon.clamp_(-1., 1.)
@@ -1240,21 +1254,22 @@ class LatentDiffusionV1(DDPMV1):
 
 
     @torch.no_grad()
-    def log_images(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
-                   quantize_denoised=True, inpaint=True, plot_denoise_rows=False, plot_progressive_rows=True,
-                   plot_diffusion_rows=True, **kwargs):
+    def log_images(self, batch, N=4, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
+                   quantize_denoised=True, inpaint=False, plot_denoise_rows=False, plot_progressive_rows=False,
+                   plot_diffusion_rows=False, **kwargs):
 
-        use_ddim = ddim_steps is not None
+        use_ddim = False
 
         log = {}
         z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
                                            return_first_stage_outputs=True,
                                            force_c_encode=True,
                                            return_original_cond=True,
-                                           bs=N)
+                                           bs=N, uncond=0)
         N = min(x.shape[0], N)
         n_row = min(x.shape[0], n_row)
         log["inputs"] = x
+        log["reals"] = xc["c_concat"]
         log["reconstruction"] = xrec
         if self.model.conditioning_key is not None:
             if hasattr(self.cond_stage_model, "decode"):
@@ -1273,7 +1288,7 @@ class LatentDiffusionV1(DDPMV1):
 
         if plot_diffusion_rows:
             # get diffusion row
-            diffusion_row = []
+            diffusion_row = list()
             z_start = z[:n_row]
             for t in range(self.num_timesteps):
                 if t % self.log_every_t == 0 or t == self.num_timesteps - 1:
@@ -1384,7 +1399,7 @@ class LatentDiffusionV1(DDPMV1):
         return x
 
 
-class DiffusionWrapperV1(pl.LightningModule):
+class DiffusionWrapper(pl.LightningModule):
     def __init__(self, diff_model_config, conditioning_key):
         super().__init__()
         self.diffusion_model = instantiate_from_config(diff_model_config)
@@ -1408,13 +1423,12 @@ class DiffusionWrapperV1(pl.LightningModule):
             cc = c_crossattn[0]
             out = self.diffusion_model(x, t, y=cc)
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
         return out
 
 
-class Layout2ImgDiffusionV1(LatentDiffusionV1):
-    # TODO: move all layout-specific hacks to this class
+class Layout2ImgDiffusion(LatentDiffusion):
     def __init__(self, cond_stage_key, *args, **kwargs):
         assert cond_stage_key == 'coordinates_bbox', 'Layout2ImgDiffusion only for cond_stage_key="coordinates_bbox"'
         super().__init__(*args, cond_stage_key=cond_stage_key, **kwargs)
@@ -1435,8 +1449,3 @@ class Layout2ImgDiffusionV1(LatentDiffusionV1):
         cond_img = torch.stack(bbox_imgs, dim=0)
         logs['bbox_image'] = cond_img
         return logs
-
-ldm.models.diffusion.ddpm.DDPMV1 = DDPMV1
-ldm.models.diffusion.ddpm.LatentDiffusionV1 = LatentDiffusionV1
-ldm.models.diffusion.ddpm.DiffusionWrapperV1 = DiffusionWrapperV1
-ldm.models.diffusion.ddpm.Layout2ImgDiffusionV1 = Layout2ImgDiffusionV1

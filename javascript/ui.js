@@ -143,7 +143,7 @@ function clearGallery(tabname) {
   footer.style.display = 'flex';
 }
 
-function submit(...args) {
+function submit_txt2img(...args) {
   log('submitTxt');
   clearGallery('txt2img');
   const id = randomId();
@@ -170,6 +170,8 @@ function submit_postprocessing(...args) {
   return args;
 }
 
+const submit = submit_txt2img;
+
 function modelmerger(...args) {
   const id = randomId();
   const res = create_submit_args(args);
@@ -177,12 +179,7 @@ function modelmerger(...args) {
   return res;
 }
 
-function ask_for_style_name(_, prompt_text, negative_prompt_text) {
-  const name = prompt('Style name:'); // eslint-disable-line no-alert
-  return [name, prompt_text, negative_prompt_text];
-}
-
-function confirm_clear_prompt(prompt, negative_prompt) {
+function clearPrompts(prompt, negative_prompt) {
   prompt = '';
   negative_prompt = '';
   return [prompt, negative_prompt];
@@ -339,7 +336,19 @@ function updateInput(target) {
 let desiredCheckpointName = null;
 function selectCheckpoint(name) {
   desiredCheckpointName = name;
-  gradioApp().getElementById('change_checkpoint').click();
+  const tabname = getENActiveTab();
+  const btnModel = gradioApp().getElementById(`${tabname}_extra_model`);
+  const isRefiner = btnModel && btnModel.classList.contains('toolbutton-selected');
+  if (isRefiner) gradioApp().getElementById('change_refiner').click();
+  else gradioApp().getElementById('change_checkpoint').click();
+  log(`Change ${isRefiner ? 'refiner' : 'model'}: ${desiredCheckpointName}`);
+}
+
+let desiredVAEName = null;
+function selectVAE(name) {
+  desiredVAEName = name;
+  gradioApp().getElementById('change_vae').click();
+  log(`Change VAE: ${desiredVAEName}`);
 }
 
 function currentImg2imgSourceResolution(_a, _b, scaleBy) {

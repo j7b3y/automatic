@@ -94,7 +94,7 @@ class StableDiffusionProcessing:
     """
     The first set of paramaters: sd_models -> do_not_reload_embeddings represent the minimum required to create a StableDiffusionProcessing
     """
-    def __init__(self, sd_model=None, outpath_samples=None, outpath_grids=None, prompt: str = "", styles: List[str] = None, seed: int = -1, subseed: int = -1, subseed_strength: float = 0, seed_resize_from_h: int = -1, seed_resize_from_w: int = -1, seed_enable_extras: bool = True, sampler_name: str = None, latent_sampler: str = None, batch_size: int = 1, n_iter: int = 1, steps: int = 50, cfg_scale: float = 7.0, image_cfg_scale: float = None, clip_skip: int = 1, width: int = 512, height: int = 512, full_quality: bool = True, restore_faces: bool = False, tiling: bool = False, do_not_save_samples: bool = False, do_not_save_grid: bool = False, extra_generation_params: Dict[Any, Any] = None, overlay_images: Any = None, negative_prompt: str = None, eta: float = None, do_not_reload_embeddings: bool = False, denoising_strength: float = 0, diffusers_guidance_rescale: float = 0.7, ddim_discretize: str = None, s_min_uncond: float = 0.0, s_churn: float = 0.0, s_tmax: float = None, s_tmin: float = 0.0, s_noise: float = 1.0, override_settings: Dict[str, Any] = None, override_settings_restore_afterwards: bool = True, sampler_index: int = None, script_args: list = None): # pylint: disable=unused-argument
+    def __init__(self, sd_model=None, outpath_samples=None, outpath_grids=None, prompt: str = "", styles: List[str] = None, seed: int = -1, subseed: int = -1, subseed_strength: float = 0, seed_resize_from_h: int = -1, seed_resize_from_w: int = -1, seed_enable_extras: bool = True, sampler_name: str = None, latent_sampler: str = None, batch_size: int = 1, n_iter: int = 1, steps: int = 50, cfg_scale: float = 7.0, image_cfg_scale: float = None, clip_skip: int = 1, width: int = 512, height: int = 512, full_quality: bool = True, restore_faces: bool = False, tiling: bool = False, do_not_save_samples: bool = False, do_not_save_grid: bool = False, extra_generation_params: Dict[Any, Any] = None, overlay_images: Any = None, negative_prompt: str = None, eta: float = None, do_not_reload_embeddings: bool = False, denoising_strength: float = 0, diffusers_guidance_rescale: float = 0.7, override_settings: Dict[str, Any] = None, override_settings_restore_afterwards: bool = True, sampler_index: int = None, script_args: list = None): # pylint: disable=unused-argument
 
         self.outpath_samples: str = outpath_samples
         self.outpath_grids: str = outpath_grids
@@ -130,13 +130,6 @@ class StableDiffusionProcessing:
         self.paste_to = None
         self.color_corrections = None
         self.denoising_strength: float = denoising_strength
-        self.sampler_noise_scheduler_override = None
-        self.ddim_discretize = ddim_discretize or shared.opts.ddim_discretize
-        self.s_min_uncond = s_min_uncond or shared.opts.s_min_uncond
-        self.s_churn = s_churn or shared.opts.s_churn
-        self.s_tmin = s_tmin or shared.opts.s_tmin
-        self.s_tmax = s_tmax or float('inf')  # not representable as a standard ui option
-        self.s_noise = s_noise or shared.opts.s_noise
         self.override_settings = {k: v for k, v in (override_settings or {}).items() if k not in shared.restricted_opts}
         self.override_settings_restore_afterwards = override_settings_restore_afterwards
         self.is_using_inpainting_conditioning = False
@@ -163,6 +156,14 @@ class StableDiffusionProcessing:
         self.refiner_steps = 5
         self.refiner_start = 0
         self.ops = []
+        self.ddim_discretize = shared.opts.ddim_discretize
+        self.s_min_uncond = shared.opts.s_min_uncond
+        self.s_churn = shared.opts.s_churn
+        self.s_noise = shared.opts.s_noise
+        self.s_min = shared.opts.s_min
+        self.s_max = shared.opts.s_max
+        self.s_tmin = shared.opts.s_tmin
+        self.s_tmax = float('inf')  # not representable as a standard ui option
         shared.opts.data['clip_skip'] = clip_skip
 
     @property
@@ -304,7 +305,6 @@ class Processed:
         self.s_tmax = p.s_tmax
         self.s_noise = p.s_noise
         self.s_min_uncond = p.s_min_uncond
-        self.sampler_noise_scheduler_override = p.sampler_noise_scheduler_override
         self.prompt = self.prompt if type(self.prompt) != list else self.prompt[0]
         self.negative_prompt = self.negative_prompt if type(self.negative_prompt) != list else self.negative_prompt[0]
         self.seed = int(self.seed if type(self.seed) != list else self.seed[0]) if self.seed is not None else -1
@@ -516,10 +516,10 @@ def create_infotext(p: StableDiffusionProcessing, all_prompts, all_seeds, all_su
         args["Init image size"] = f"{getattr(p, 'init_img_width', 0)}x{getattr(p, 'init_img_height', 0)}"
         args["Init image hash"] = getattr(p, 'init_img_hash', None)
         args["Conditional mask weight"] = getattr(p, "inpainting_mask_weight", shared.opts.inpainting_mask_weight) if p.is_using_inpainting_conditioning else None
-        args['Resize mode'] = p.resize_mode
-        args["Mask blur"] = p.mask_blur if p.mask is not None and p.mask_blur > 0 else None
-        args["Noise multiplier"] = p.initial_noise_multiplier if p.initial_noise_multiplier != 1.0 else None
-        args["Denoising strength"] = p.denoising_strength
+        args['Resize mode'] = getattr(p, 'resize_mode', None)
+        args["Mask blur"] = p.mask_blur if getattr(p, 'mask', None) is not None and getattr(p, 'mask_blur', 0) > 0 else None
+        args["Noise multiplier"] = p.initial_noise_multiplier if getattr(p, 'initial_noise_multiplier', 1.0) != 1.0 else None
+        args["Denoising strength"] = getattr(p, 'denoising_strength', None)
     if 'face' in p.ops:
         args["Face restoration"] = shared.opts.face_restoration_model
     if 'color' in p.ops:
@@ -933,7 +933,7 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
 
     def init(self, all_prompts, all_seeds, all_subseeds):
         if shared.backend == shared.Backend.DIFFUSERS:
-            modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.TEXT_2_IMAGE)
+            shared.sd_model = modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.TEXT_2_IMAGE)
         self.width = self.width or 512
         self.height = self.height or 512
 
@@ -965,16 +965,13 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
         if (self.hr_upscale_to_x == self.width and self.hr_upscale_to_y == self.height) or self.hr_upscaler is None or self.hr_upscaler == 'None':
             self.is_hr_pass = False
             return
-        if self.denoising_strength == 0:
-            self.is_hr_pass = False
-            return
         self.is_hr_pass = True
         if not shared.state.processing_has_refined_job_count:
             if shared.state.job_count == -1:
                 shared.state.job_count = self.n_iter
             shared.state.job_count = shared.state.job_count * 2
             shared.state.processing_has_refined_job_count = True
-        shared.log.debug(f'Init hires: upscaler={self.hr_upscaler} sampler={self.latent_sampler} resize={self.hr_resize_x}x{self.hr_resize_y} upscale={self.hr_upscale_to_x}x{self.hr_upscale_to_y}')
+        shared.log.debug(f'Init hires: upscaler="{self.hr_upscaler}" sampler="{self.latent_sampler}" resize={self.hr_resize_x}x{self.hr_resize_y} upscale={self.hr_upscale_to_x}x{self.hr_upscale_to_y}')
 
     def sample(self, conditioning, unconditional_conditioning, seeds, subseeds, subseed_strength, prompts):
 
@@ -993,9 +990,6 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
             self.restore_faces = orig2
             images.save_image(image, self.outpath_samples, "", seeds[index], prompts[index], shared.opts.samples_format, info=info, suffix="-before-hires")
 
-        if shared.backend == shared.Backend.DIFFUSERS:
-            modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.TEXT_2_IMAGE)
-
         latent_scale_mode = shared.latent_upscale_modes.get(self.hr_upscaler, None) if self.hr_upscaler is not None else shared.latent_upscale_modes.get(shared.latent_upscale_default_mode, "None")
         if latent_scale_mode is not None:
             self.hr_force = False # no need to force anything
@@ -1013,7 +1007,6 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
 
         self.init_hr()
         if self.is_hr_pass:
-            self.ops.append('hires')
             target_width = self.hr_upscale_to_x
             target_height = self.hr_upscale_to_y
             for i in range(samples.shape[0]):
@@ -1051,13 +1044,17 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
                 if self.latent_sampler == "PLMS":
                     self.latent_sampler = 'UniPC'
             if self.hr_force or latent_scale_mode is not None:
-                devices.torch_gc() # GC now before running the next img2img to prevent running out of memory
-                self.sampler = modules.sd_samplers.create_sampler(self.latent_sampler or self.sampler_name, self.sd_model)
-                samples = samples[:, :, self.truncate_y//2:samples.shape[2]-(self.truncate_y+1)//2, self.truncate_x//2:samples.shape[3]-(self.truncate_x+1)//2]
-                noise = create_random_tensors(samples.shape[1:], seeds=seeds, subseeds=subseeds, subseed_strength=subseed_strength, p=self)
-                modules.sd_models.apply_token_merging(self.sd_model, self.get_token_merging_ratio(for_hr=True))
-                samples = self.sampler.sample_img2img(self, samples, noise, conditioning, unconditional_conditioning, steps=self.hr_second_pass_steps or self.steps, image_conditioning=image_conditioning)
-                modules.sd_models.apply_token_merging(self.sd_model, self.get_token_merging_ratio())
+                if self.denoising_strength > 0:
+                    self.ops.append('hires')
+                    devices.torch_gc() # GC now before running the next img2img to prevent running out of memory
+                    self.sampler = modules.sd_samplers.create_sampler(self.latent_sampler or self.sampler_name, self.sd_model)
+                    samples = samples[:, :, self.truncate_y//2:samples.shape[2]-(self.truncate_y+1)//2, self.truncate_x//2:samples.shape[3]-(self.truncate_x+1)//2]
+                    noise = create_random_tensors(samples.shape[1:], seeds=seeds, subseeds=subseeds, subseed_strength=subseed_strength, p=self)
+                    modules.sd_models.apply_token_merging(self.sd_model, self.get_token_merging_ratio(for_hr=True))
+                    samples = self.sampler.sample_img2img(self, samples, noise, conditioning, unconditional_conditioning, steps=self.hr_second_pass_steps or self.steps, image_conditioning=image_conditioning)
+                    modules.sd_models.apply_token_merging(self.sd_model, self.get_token_merging_ratio())
+                else:
+                    self.ops.append('upscale')
             x = None
             shared.state.nextjob()
             self.is_hr_pass = False
@@ -1096,11 +1093,11 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
         self.sampler = None
 
     def init(self, all_prompts, all_seeds, all_subseeds):
-        if shared.backend == shared.Backend.DIFFUSERS and self.image_mask is None:
-            modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.IMAGE_2_IMAGE)
-        elif shared.backend == shared.Backend.DIFFUSERS and self.image_mask is not None:
-            modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.INPAINTING)
+        if shared.backend == shared.Backend.DIFFUSERS and self.image_mask is not None:
+            shared.sd_model = modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.INPAINTING)
             self.sd_model.dtype = self.sd_model.unet.dtype
+        elif shared.backend == shared.Backend.DIFFUSERS and self.image_mask is None:
+            shared.sd_model = modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.IMAGE_2_IMAGE)
 
         if self.sampler_name == "PLMS":
             self.sampler_name = 'UniPC'
@@ -1213,13 +1210,6 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
         self.image_conditioning = self.img2img_image_conditioning(image, self.init_latent, image_mask)
 
     def sample(self, conditioning, unconditional_conditioning, seeds, subseeds, subseed_strength, prompts):
-        if shared.backend == shared.Backend.DIFFUSERS:
-            if self.init_mask is None: # pylint: disable=no-member
-                modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.IMAGE_2_IMAGE)
-            else:
-                modules.sd_models.set_diffuser_pipe(self.sd_model, modules.sd_models.DiffusersTaskType.INPAINTING)
-                self.sd_model.dtype = self.sd_model.unet.dtype
-
         x = create_random_tensors([4, self.height // 8, self.width // 8], seeds=seeds, subseeds=subseeds, subseed_strength=self.subseed_strength, seed_resize_from_h=self.seed_resize_from_h, seed_resize_from_w=self.seed_resize_from_w, p=self)
         x *= self.initial_noise_multiplier
         samples = self.sampler.sample_img2img(self, self.init_latent, x, conditioning, unconditional_conditioning, image_conditioning=self.image_conditioning)
