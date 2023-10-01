@@ -1,0 +1,10 @@
+{
+  "txt2img/Advanced/value": true,
+  "txt2img/CFG scale/value": 7,
+  "txt2img/CLIP skip/value": 2,
+  "txt2img/Sampling method/value": "Euler a",
+  "txt2img/Styles/value": [
+    "Negative Template"
+  ],
+  "txt2img/Seed details/value": true
+}

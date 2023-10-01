@@ -62,3 +62,7 @@ cache
 !/repositories/.placeholder
 !/models/VAE-approx
 !/models/VAE-approx/model.pt
+!/models/styles
+!/models/Lora
+!config.json
+!ui-config.json
