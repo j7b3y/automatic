@@ -23,26 +23,3 @@ async function preloadImages() {
     console.error('Error preloading images:', error);
   }
 }
-
-async function createSplash() {
-  const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  log('createSplash', { theme: dark ? 'dark' : 'light' });
-  const num = Math.floor(11 * Math.random());
-  const splash = `
-    <div id="splash" class="splash" style="background: ${dark ? 'black' : 'white'}">
-      <div class="loading"><div class="loader"></div></div>
-    </div>`;
-  document.body.insertAdjacentHTML('beforeend', splash);
-  await preloadImages();
-  const imgElement = `<div class="splash-img" alt="logo" style="background-image: url(file=html/logo-bg-${dark ? 'dark' : 'light'}.jpg), url(file=html/logo-bg-${num}.jpg); background-blend-mode: ${dark ? 'multiply' : 'lighten'}"></div>`;
-  document.getElementById('splash').insertAdjacentHTML('afterbegin', imgElement);
-}
-
-async function removeSplash() {
-  const splash = document.getElementById('splash');
-  if (splash) splash.remove();
-  log('removeSplash');
-  log('startupTime', Math.round(performance.now() - appStartTime) / 1000);
-}
-
-window.onload = createSplash;
