@@ -1,9 +1,9 @@
 {
-  "clip_skip": 2,
+  "clip_skip": 1,
   "uni_pc_lower_order_final": true,
   "uni_pc_order": 2,
   "styles_dir": "models\\styles",
-  "sd_model_checkpoint": "anything-v3-fp16-pruned.safetensors [d1facd9a2b]",
+  "sd_model_checkpoint": "anything-v3-fp16-pruned [d1facd9a2b]",
   "sd_checkpoint_hash": "d1facd9a2b7c5e46d4d54de5a7441c370804c0c5727ca04a0708319d04047c58",
   "samples_format": "png",
   "cuda_compile_backend": "ipex",
@@ -25,11 +25,9 @@
     "sd_backend",
     "sd_vae"
   ],
-  "cuda_dtype": "FP16",
   "diffusers_lora_loader": "diffusers",
   "grid_format": "png",
   "samples_filename_pattern": "[date]-[prompt_words]",
-  "sd_backend": "diffusers",
   "save_to_dirs": true,
   "directories_filename_pattern": "[spsf<nsfw,nude,fuck,sleep molestation,nipples|sfw|nsfw>]",
   "outdir_txt2img_samples": "outputs\\text",
@@ -38,5 +36,10 @@
   "outdir_txt2img_grids": "outputs\\grids",
   "outdir_img2img_grids": "outputs\\grids",
   "outdir_save": "outputs\\save",
-  "outdir_init_images": "outputs\\init-images"
+  "outdir_init_images": "outputs\\init-images",
+  "openvino_multi_gpu": true,
+  "sd_backend": "diffusers",
+  "schedulers_brownian_noise": false,
+  "diffusers_force_inpaint": true,
+  "cuda_dtype": "FP16"
 }
