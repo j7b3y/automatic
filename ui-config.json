@@ -4,7 +4,7 @@
   "txt2img/CLIP skip/value": 2,
   "txt2img/Sampling method/value": "Euler a",
   "txt2img/Styles/value": [
-    "Negative Template"
+    "Generic\\Negative Template"
   ],
   "txt2img/Seed details/value": true
 }

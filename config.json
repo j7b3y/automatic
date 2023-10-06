@@ -16,7 +16,8 @@
     "Euler a",
     "LMS",
     "DPM 2M",
-    "DDIM"
+    "DDIM",
+    "Euler A"
   ],
   "gradio_theme": "wayum999/Dark",
   "cross_attention_optimization": "Sub-quadratic",
@@ -38,8 +39,9 @@
   "outdir_save": "outputs\\save",
   "outdir_init_images": "outputs\\init-images",
   "openvino_multi_gpu": true,
-  "sd_backend": "diffusers",
   "schedulers_brownian_noise": false,
   "diffusers_force_inpaint": true,
-  "cuda_dtype": "FP16"
+  "extra_networks_styles": false,
+  "cuda_dtype": "FP16",
+  "sd_backend": "diffusers"
 }
