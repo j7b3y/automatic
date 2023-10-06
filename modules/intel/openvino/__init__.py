@@ -336,7 +336,7 @@ def partition_graph(gm, use_python_fusion_cache: bool, model_hash_str: str = Non
 def openvino_fx(subgraph, example_inputs):
     executor_parameters = None
     inputs_reversed = False
-    if not shared.opts.openvino_disable_model_caching:
+    if os.getenv("OPENVINO_TORCH_MODEL_CACHING") != "0":
         os.environ.setdefault('OPENVINO_TORCH_MODEL_CACHING', "1")
         # Create a hash to be used for caching
         model_hash_str = sha256(subgraph.code.encode('utf-8')).hexdigest()
@@ -386,8 +386,7 @@ def openvino_fx(subgraph, example_inputs):
                     return res
                 return _call
     else:
-        os.environ.setdefault('OPENVINO_TORCH_MODEL_CACHING', "0")
-        maybe_fs_cached_name = None
+        maybe_fs_cached_name = ""
 
     if inputs_reversed:
         example_inputs.reverse()

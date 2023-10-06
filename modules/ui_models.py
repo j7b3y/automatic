@@ -17,7 +17,7 @@ search_metadata_civit = None
 def create_ui():
     dummy_component = gr.Label(visible=False)
 
-    with gr.Row(elem_id="models_tab"):
+    with gr.Row(id="models_tab", elem_id="models_tab"):
         with gr.Column(elem_id='models_output_container', scale=1):
             # models_output = gr.Text(elem_id="models_output", value="", show_label=False)
             gr.HTML(elem_id="models_progress", value="")
@@ -69,7 +69,7 @@ def create_ui():
                 )
 
             with gr.Tab(label="Merge"):
-                with gr.Row(equal_height=False):
+                with gr.Row().style(equal_height=False):
                     with gr.Column(variant='compact'):
                         with FormRow():
                             custom_name = gr.Textbox(label="New model name")
@@ -281,8 +281,7 @@ def create_ui():
                                 model['stats']['downloadCount'],
                                 model['stats']['rating']
                             ])
-                    res = f'Search result: name={name} tag={tag or "none"} type={model_type} models={len(data1)}'
-                    return res, gr.update(visible=len(data1) > 0, value=data1 if len(data1) > 0 else []), gr.update(visible=False, value=None), gr.update(visible=False, value=None)
+                    return data1, [], []
 
                 def civit_select1(evt: gr.SelectData, in_data):
                     model_id = in_data[evt.index[0]][0]
@@ -301,7 +300,7 @@ def create_ui():
                                     d['createdAt'],
                                 ])
                     log.debug(f'CivitAI select: model="{in_data[evt.index[0]]}" versions={len(data2)}')
-                    return data2, None, preview_img
+                    return data2, preview_img
 
                 def civit_select2(evt: gr.SelectData, in_data):
                     variant_id = in_data[evt.index[0]][0]
@@ -361,14 +360,10 @@ def create_ui():
                                     if r.status_code == 200:
                                         d = r.json()
                                         res.append(download_civit_meta(item['filename'], d['modelId']))
-                                        if d.get('images') is not None:
-                                            for i in d['images']:
-                                                preview_url = i['url']
-                                                img_res = download_civit_preview(item['filename'], preview_url)
-                                                res.append(img_res)
-                                                if 'error' not in img_res:
-                                                    found = True
-                                                    break
+                                        if d.get('images') is not None and len(d['images']) > 0 and len(d['images'][0]['url']) > 0:
+                                            preview_url = d['images'][0]['url']
+                                            res.append(download_civit_preview(item['filename'], preview_url))
+                                            found = True
                                 if not found and civit_previews_rehash and os.stat(item['filename']).st_size < (1024 * 1024 * 1024):
                                     sha = modules.hashes.calculate_sha256(item['filename'], quiet=True)[:10]
                                     r = req(f'https://civitai.com/api/v1/model-versions/by-hash/{sha}')
@@ -376,29 +371,24 @@ def create_ui():
                                     if r.status_code == 200:
                                         d = r.json()
                                         res.append(download_civit_meta(item['filename'], d['modelId']))
-                                        if d.get('images') is not None:
-                                            for i in d['images']:
-                                                preview_url = i['url']
-                                                img_res = download_civit_preview(item['filename'], preview_url)
-                                                res.append(img_res)
-                                                if 'error' not in img_res:
-                                                    found = True
-                                                    break
+                                        if d.get('images') is not None and len(d['images']) > 0 and len(d['images'][0]['url']) > 0:
+                                            preview_url = d['images'][0]['url']
+                                            res.append(download_civit_preview(item['filename'], preview_url))
                     txt = '<br>'.join([r for r in res if len(r) > 0])
                     return txt
 
                 global search_metadata_civit # pylint: disable=global-statement
                 search_metadata_civit = civit_search_metadata
 
-                with gr.Row():
+                with gr.Row(style={'margin-top': '1em'}):
                     gr.HTML('<h2>Fetch information</h2>Fetches preview and metadata information for all models with missing information<br>Models with existing previews and information are not updated<br>')
                 with gr.Row():
                     civit_previews_btn = gr.Button(value="Start", variant='primary')
                 with gr.Row():
                     civit_previews_rehash = gr.Checkbox(value=True, label="Check alternative hash")
 
-                with gr.Row():
-                    gr.HTML('<h2>Search for models</h2>')
+                with gr.Row(style={'margin-top': '1em'}):
+                    gr.HTML('<h2>Search for models</h2>Select a model, model version and and model variant from the search results to download<br>')
                 with gr.Row():
                     with gr.Column(scale=1):
                         civit_model_type = gr.Dropdown(label='Model type', choices=['SD 1.5', 'SD XL', 'LoRA', 'Other'], value='LoRA')
@@ -407,45 +397,31 @@ def create_ui():
                             civit_search_text = gr.Textbox('', label = 'Search models', placeholder='keyword')
                             civit_search_tag = gr.Textbox('', label = '', placeholder='tags')
                             civit_search_btn = ToolButton(value="🔍", label="Search", interactive=False)
-                        with gr.Row():
-                            civit_search_res = gr.HTML('')
                 with gr.Row():
-                    gr.HTML('<h2>Download model</h2>')
-                with gr.Row():
-                    civit_download_model_btn = gr.Button(value="Download", variant='primary')
-                    gr.HTML('<span style="line-height: 2em">Select a model, model version and and model variant from the search results to download or enter model URL manually</span><br>')
+                    civit_download_model_btn = gr.Button(value="Download model", variant='primary')
                 with gr.Row():
                     civit_name = gr.Textbox('', label = 'Model name', placeholder='select model from search results', visible=True)
                     civit_selected = gr.Textbox('', label = 'Model URL', placeholder='select model from search results', visible=True)
                     civit_path = gr.Textbox('', label = 'Download path', placeholder='optional subfolder path where to save model', visible=True)
                 with gr.Row():
-                    gr.HTML('<h2>Search results</h2>')
-                with gr.Row():
-                    civit_headers1 = ['ID', 'Name', 'Tags', 'Downloads', 'Rating']
-                    civit_types1 = ['number', 'str', 'str', 'number', 'number']
-                    civit_results1 = gr.DataFrame(value = None, label = None, show_label = False, interactive = False, wrap = True, overflow_row_behaviour = 'paginate', max_rows = 10, headers = civit_headers1, datatype = civit_types1, type='array', visible=False)
-                with gr.Row():
                     with gr.Column():
                         civit_headers2 = ['ID', 'ModelID', 'Name', 'Base', 'Created', 'Preview']
                         civit_types2 = ['number', 'number', 'str', 'str', 'date', 'str']
-                        civit_results2 = gr.DataFrame(value = None, label = 'Model versions', show_label = True, interactive = False, wrap = True, overflow_row_behaviour = 'paginate', max_rows = 10, headers = civit_headers2, datatype = civit_types2, type='array', visible=False)
+                        civit_results2 = gr.DataFrame(value = None, label = 'Model versions', show_label = True, interactive = False, wrap = True, overflow_row_behaviour = 'paginate', max_rows = 10, headers = civit_headers2, datatype = civit_types2, type='array')
                     with gr.Column():
                         civit_headers3 = ['Name', 'Size', 'Metadata', 'URL']
                         civit_types3 = ['str', 'number', 'str', 'str']
-                        civit_results3 = gr.DataFrame(value = None, label = 'Model variants', show_label = True, interactive = False, wrap = True, overflow_row_behaviour = 'paginate', max_rows = 10, headers = civit_headers3, datatype = civit_types3, type='array', visible=False)
+                        civit_results3 = gr.DataFrame(value = None, label = 'Model variants', show_label = True, interactive = False, wrap = True, overflow_row_behaviour = 'paginate', max_rows = 10, headers = civit_headers3, datatype = civit_types3, type='array')
+                with gr.Row():
+                    civit_headers1 = ['ID', 'Name', 'Tags', 'Downloads', 'Rating']
+                    civit_types1 = ['number', 'str', 'str', 'number', 'number']
+                    civit_results1 = gr.DataFrame(value = None, label = 'Search results', show_label = True, interactive = False, wrap = True, overflow_row_behaviour = 'paginate', max_rows = 10, headers = civit_headers1, datatype = civit_types1, type='array')
 
-                def is_visible(component):
-                    visible = len(component) > 0 if component is not None else False
-                    return gr.update(visible=visible)
-
-                civit_search_text.submit(fn=civit_search_model, inputs=[civit_search_text, civit_search_tag, civit_model_type], outputs=[civit_search_res, civit_results1, civit_results2, civit_results3])
-                civit_search_tag.submit(fn=civit_search_model, inputs=[civit_search_text, civit_search_tag, civit_model_type], outputs=[civit_search_res, civit_results1, civit_results2, civit_results3])
-                civit_search_btn.click(fn=civit_search_model, inputs=[civit_search_text, civit_search_tag, civit_model_type], outputs=[civit_search_res, civit_results1, civit_results2, civit_results3])
-                civit_results1.select(fn=civit_select1, inputs=[civit_results1], outputs=[civit_results2, civit_results3, models_image])
+                civit_search_text.submit(fn=civit_search_model, inputs=[civit_search_text, civit_search_tag, civit_model_type], outputs=[civit_results1, civit_results2, civit_results3])
+                civit_search_tag.submit(fn=civit_search_model, inputs=[civit_search_text, civit_search_tag, civit_model_type], outputs=[civit_results1, civit_results2, civit_results3])
+                civit_search_btn.click(fn=civit_search_model, inputs=[civit_search_text, civit_search_tag, civit_model_type], outputs=[civit_results1, civit_results2, civit_results3])
+                civit_results1.select(fn=civit_select1, inputs=[civit_results1], outputs=[civit_results2, models_image])
                 civit_results2.select(fn=civit_select2, inputs=[civit_results2], outputs=[civit_results3])
                 civit_results3.select(fn=civit_select3, inputs=[civit_results3], outputs=[civit_selected, civit_name, civit_search_btn])
-                civit_results1.change(fn=is_visible, inputs=[civit_results1], outputs=[civit_results1])
-                civit_results2.change(fn=is_visible, inputs=[civit_results2], outputs=[civit_results2])
-                civit_results3.change(fn=is_visible, inputs=[civit_results3], outputs=[civit_results3])
                 civit_download_model_btn.click(fn=civit_download_model, inputs=[civit_selected, civit_name, civit_path, civit_model_type, models_image], outputs=[models_outcome])
                 civit_previews_btn.click(fn=civit_search_metadata, inputs=[civit_previews_rehash, civit_previews_rehash], outputs=[models_outcome])

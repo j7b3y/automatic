@@ -1,14 +1,9 @@
-let settingsInitialized = false;
 let opts_metadata = {};
 const opts_tabs = {};
 
 const monitoredOpts = [
   { sd_model_checkpoint: null },
   { sd_backend: () => gradioApp().getElementById('refresh_sd_model_checkpoint')?.click() },
-];
-
-const AppyOpts = [
-  { compact_view: (val) => toggleCompact(val) },
 ];
 
 function updateOpts(json_string) {
@@ -20,11 +15,6 @@ function updateOpts(json_string) {
       log('updateOpts', key, opts[key], settings_data.values[key]);
       if (callback) callback();
     }
-  }
-  for (const op of AppyOpts) {
-    const key = Object.keys(op)[0];
-    const callback = op[key];
-    if (callback) callback(settings_data.values[key]);
   }
   opts = settings_data.values;
   opts_metadata = settings_data.metadata;
@@ -48,7 +38,6 @@ function showAllSettings() {
 }
 
 function markIfModified(setting_name, value) {
-  if (!opts_metadata[setting_name]) return;
   const elem = gradioApp().getElementById(`modification_indicator_${setting_name}`);
   if (!elem) return;
   const previous_value = JSON.stringify(opts[setting_name]);
@@ -139,9 +128,7 @@ onOptionsChanged(() => {
   });
 });
 
-function initSettings() {
-  if (settingsInitialized) return;
-  settingsInitialized = true;
+onUiLoaded(() => {
   const tab_nav_element = gradioApp().querySelector('#settings > .tab-nav');
   const tab_nav_buttons = gradioApp().querySelectorAll('#settings > .tab-nav > button');
   const tab_elements = gradioApp().querySelectorAll('#settings > div:not(.tab-nav)');
@@ -162,6 +149,4 @@ function initSettings() {
     observer.observe(elem, { attributes: true, attributeFilter: ['style'] });
   });
   log('initSettings');
-}
-
-onUiLoaded(initSettings);
+});

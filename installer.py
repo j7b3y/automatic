@@ -399,16 +399,18 @@ def check_torch():
                 log.debug(f'HSA_OVERRIDE_GFX_VERSION auto config is skipped for {gpu}')
         try:
             command = subprocess.run('hipconfig --version', shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            arr = command.stdout.decode(encoding="utf8", errors="ignore").split('.')
-            if len(arr) >= 2:
-                rocm_ver = f'{arr[0]}.{arr[1]}'
+            major_ver, minor_ver, *_ = command.stdout.decode(encoding="utf8", errors="ignore").split('.')
+            rocm_ver = f'{major_ver}.{minor_ver}'
             log.debug(f'ROCm version detected: {rocm_ver}')
         except Exception as e:
-            log.debug(f'ROCm hipconfig failed: {e}')
+            log.debug(f'Run hipconfig failed: {e}')
             rocm_ver = None
-        if rocm_ver in ['5.5', '5.6', '5.7']:
+        if rocm_ver in ['5.5', '5.6']:
             # install torch nightly via torchvision to avoid wasting bandwidth when torchvision depends on torch from yesterday
             torch_command = os.environ.get('TORCH_COMMAND', f'torchvision --pre --index-url https://download.pytorch.org/whl/nightly/rocm{rocm_ver}')
+        elif rocm_ver in ['5.7']:
+            # there is no torch nightly for rocm 5.7 yet
+            torch_command = os.environ.get('TORCH_COMMAND', 'torchvision --pre --index-url https://download.pytorch.org/whl/nightly/rocm5.6')
         else:
             torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/rocm5.4.2')
         xformers_package = os.environ.get('XFORMERS_PACKAGE', 'none')
@@ -527,6 +529,10 @@ def install_packages():
         pr = cProfile.Profile()
         pr.enable()
     log.info('Verifying packages')
+    # gfpgan_package = os.environ.get('GFPGAN_PACKAGE', "git+https://github.com/TencentARC/GFPGAN.git@8d2447a2d918f8eba5a4a01463fd48e45126a379")
+    # openclip_package = os.environ.get('OPENCLIP_PACKAGE', "git+https://github.com/mlfoundations/open_clip.git@bb6e834e9c70d9c27d0dc3ecedeebeaeb1ffad6b")
+    # install(gfpgan_package, 'gfpgan')
+    # install(openclip_package, 'open-clip-torch')
     clip_package = os.environ.get('CLIP_PACKAGE', "git+https://github.com/openai/CLIP.git")
     install(clip_package, 'clip')
     invisiblewatermark_package = os.environ.get('INVISIBLEWATERMARK_PACKAGE', "git+https://github.com/patrickvonplaten/invisible-watermark.git@remove_onnxruntime_depedency")
@@ -535,7 +541,7 @@ def install_packages():
     install('pi-heif', 'pi_heif', ignore=True)
     tensorflow_package = os.environ.get('TENSORFLOW_PACKAGE', 'tensorflow==2.13.0')
     install(tensorflow_package, 'tensorflow', ignore=True)
-    # install('nvidia-ml-py', 'pynvml', ignore=True)
+    # install('git+https://github.com/google-research/torchsde', 'torchsde', ignore=True)
     bitsandbytes_package = os.environ.get('BITSANDBYTES_PACKAGE', None)
     if bitsandbytes_package is not None:
         install(bitsandbytes_package, 'bitsandbytes', ignore=True)
@@ -693,14 +699,6 @@ def install_submodules():
 
 
 def ensure_base_requirements():
-    try:
-        import setuptools # pylint: disable=unused-import
-    except ImportError:
-        install('setuptools', 'setuptools')
-    try:
-        import setuptools # pylint: disable=unused-import
-    except ImportError:
-        pass
     try:
         import rich # pylint: disable=unused-import
     except ImportError:

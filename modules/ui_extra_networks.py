@@ -1,9 +1,7 @@
-import io
 import re
 import time
 import json
 import html
-import base64
 import os.path
 import urllib.parse
 import threading
@@ -167,8 +165,6 @@ class ExtraNetworksPage:
     def create_thumb(self):
         created = 0
         for f in self.missing_thumbs:
-            if not os.path.exists(f):
-                continue
             fn, _ext = os.path.splitext(f)
             fn = fn.replace('.preview', '')
             fn = f'{fn}.thumb.jpg'
@@ -178,11 +174,9 @@ class ExtraNetworksPage:
             try:
                 img = Image.open(f)
             except Exception:
-                img = None
                 shared.log.warning(f'Extra network removing invalid image: {f}')
+                os.remove(f)
             try:
-                if img is None:
-                    os.remove(f)
                 if img is not None and img.width > 1024 or img.height > 1024 or os.path.getsize(f) > 65536:
                     img = img.convert('RGB')
                     img.thumbnail((512, 512), Image.HAMMING)
@@ -204,7 +198,7 @@ class ExtraNetworksPage:
             self.refresh_time = time.time()
         except Exception as e:
             self.items = []
-            shared.log.error(f'Extra networks error listing items: class={self.__class__.__name__} tab={tabname} {e}')
+            shared.log.error(f'Extra networks error listing items: class={self.__class__} tab={tabname} {e}')
         for item in self.items:
             self.metadata[item["name"]] = item.get("metadata", {})
         t1 = time.time()
@@ -231,8 +225,6 @@ class ExtraNetworksPage:
                 if not self.is_empty(tgt):
                     subdirs[subdir] = 1
         subdirs = OrderedDict(sorted(subdirs.items()))
-        if self.name == 'style' and shared.opts.extra_networks_styles:
-            subdirs['built-in'] = 1
         subdirs_html = "<button class='lg secondary gradio-button custom-button search-all' onclick='extraNetworksSearchButton(event)'>all</button><br>"
         subdirs_html += "".join([f"<button class='lg secondary gradio-button custom-button' onclick='extraNetworksSearchButton(event)'>{html.escape(subdir)}</button><br>" for subdir in subdirs if subdir != ''])
         self.html = ''
@@ -456,13 +448,13 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
                     btn_save_desc = gr.Button('Save', elem_classes=['small-button'])
                     btn_delete_desc = gr.Button('Delete', elem_classes=['small-button'])
             with gr.Tab('Model metadata'):
-                info = gr.JSON({}, show_label=False)
+                info = gr.JSON({}, show_label=False, lines=8)
                 ui.details_components.append(info)
                 with gr.Row():
                     btn_save_info = gr.Button('Save', elem_classes=['small-button'])
                     btn_delete_info = gr.Button('Delete', elem_classes=['small-button'])
             with gr.Tab('Embedded metadata'):
-                meta = gr.JSON({}, show_label=False)
+                meta = gr.JSON({}, show_label=False, lines=8)
                 ui.details_components.append(meta)
 
     with ui.tabs:
@@ -477,7 +469,7 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
         ui.button_save = ToolButton(symbols.book, elem_id=tabname+"_extra_save", visible=False)
         ui.button_close = ToolButton(symbols.close, elem_id=tabname+"_extra_close")
         ui.button_model = ToolButton(symbols.refine, elem_id=tabname+"_extra_model", visible=True)
-        ui.search = gr.Textbox('', show_label=False, elem_id=tabname+"_extra_search", placeholder="Search...", elem_classes="textbox", lines=2, container=True)
+        ui.search = gr.Textbox('', show_label=False, elem_id=tabname+"_extra_search", placeholder="Search...", elem_classes="textbox", lines=2)
         ui.description = gr.Textbox('', show_label=False, elem_id=tabname+"_description", elem_classes="textbox", lines=2, interactive=False)
 
         if ui.tabname == 'txt2img': # refresh only once
@@ -591,11 +583,7 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
                     meta = json.loads(meta)
                 except Exception:
                     meta = {}
-            if ui.last_item.preview.startswith('data:'):
-                b64str = ui.last_item.preview.split(',',1)[1]
-                img = Image.open(io.BytesIO(base64.b64decode(b64str)))
-            else:
-                img = page.find_preview_file(item.filename)
+            img = page.find_preview_file(item.filename)
             lora = ''
             model = ''
             style = ''
@@ -613,19 +601,11 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
                         <tr><td>Resolution</td><td>{meta.get('modelspec.resolution', 'N/A')}</td></tr>
                     '''
             if page.title == 'Lora':
-                try:
-                    tags = getattr(item, 'tags', {})
-                    tags = [f'{name}:{tags[name]}' for i, name in enumerate(tags)]
-                    tags = ' '.join(tags)
-                except Exception:
-                    tags = ''
-                try:
-                    triggers = ' '.join(info.get('tags', []))
-                except Exception:
-                    triggers = ''
+                tags = getattr(item, 'tags', {})
+                tags = [f'{name}:{tags[name]}' for i, name in enumerate(tags)]
+                tags = ' '.join(tags)
                 lora = f'''
-                    <tr><td>Model tags</td><td>{tags}</td></tr>
-                    <tr><td>User tags</td><td>{triggers}</td></tr>
+                    <tr><td>Tags</td><td>{tags}</td></tr>
                     <tr><td>Base model</td><td>{meta.get('ss_sd_model_name', 'N/A')}</td></tr>
                     <tr><td>Resolution</td><td>{meta.get('ss_resolution', 'N/A')}</td></tr>
                     <tr><td>Training images</td><td>{meta.get('ss_num_train_images', 'N/A')}</td></tr>
@@ -637,7 +617,7 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
                     <tr><td>Description</td><td>{item.description}</td></tr>
                     <tr><td>Preview Embedded</td><td>{item.preview.startswith('data:')}</td></tr>
                 '''
-                desc = f'Name: {os.path.basename(item.name)}\nDescription: {item.description}\nPrompt: {item.prompt}\nNegative: {item.negative}\nExtra: {item.extra}\n'
+                desc = f'Name: {item.name}\nDescription: {item.description}\nPrompt: {item.prompt}\nNegative: {item.negative}\nExtra: {item.extra}\n'
             text = f'''
                 <h2 style="border-bottom: 1px solid var(--button-primary-border-color); margin-bottom: 1em; margin-top: -1.3em !important;">{item.name}</h2>
                 <table style="width: 100%; line-height: 1.3em;"><tbody>
@@ -660,9 +640,8 @@ def create_ui(container, button_parent, tabname, skip_indexing = False):
         pages = []
         for page in get_pages():
             if title is None or title == '' or title == page.title or len(page.html) == 0:
-                page.page_time = 0
-                page.refresh_time = 0
                 page.refresh()
+                page.refresh_time = 0
                 page.create_page(ui.tabname)
                 shared.log.debug(f"Refreshing Extra networks: page='{page.title}' items={len(page.items)} tab={ui.tabname}")
             pages.append(page.html)
