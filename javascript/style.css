@@ -8,6 +8,7 @@ div.compact{ gap: 1em; }
 div.gradio-html.min{ min-height: 0; }
 .block.gradio-checkbox { margin: 0.75em 1.5em 0 0; align-self: center; }
 .block.gradio-dropdown, .block.gradio-slider, .block.gradio-checkbox, .block.gradio-textbox, .block.gradio-radio, .block.gradio-checkboxgroup, .block.gradio-number, .block.gradio-colorpicker { border-width: 0 !important; box-shadow: none !important;}
+.block.gradio-textbox { overflow: visible !important; }
 .block.padded:not(.gradio-accordion) { padding: 0 !important; margin-right: 0; min-width: 90px !important; }
 .compact{ background: transparent !important; padding: 0 !important; }
 .dark .gradio-dropdown ul.options li.item:not(:has(.hide)) { background-color: var(--neutral-900); }
@@ -34,11 +35,14 @@ div.gradio-html.min{ min-height: 0; }
 .small-accordion .label-wrap { padding: 16px 0px 8px 0px; margin: 0; border-top: 2px solid var(--button-secondary-border-color); }
 .small-accordion .label-wrap .icon { margin-right: 1.6em; margin-left: 0.6em; color: var(--button-primary-border-color); }
 .hidden { display: none; }
+.form-compact { margin-bottom: 0 !important; gap: 0.2em 1em !important; }
+.accordion-compact { padding: 8px 0px 4px 0px !important; }
 .flex-break { flex-basis: 100% !important; }
 footer { display: none; }
 table { overflow-x: auto !important; overflow-y: auto !important; }
 td { border-bottom: none !important; padding: 0.1em 0.5em !important; }
 tr { border-bottom: none !important; padding: 0.1em 0.5em !important; }
+.gradio-column { min-width: unset !important; }
 
 /* general styled components */
 .gradio-button.tool { max-width: min-content; min-width: min-content !important; align-self: end; font-size: 1.4em; color: var(--body-text-color) !important; }
@@ -84,7 +88,7 @@ button.custom-button{
 #txt2img_actions_column, #img2img_actions_column { gap: 0.5em; height: fit-content; }
 #txt2img_generate_box > button, #img2img_generate_box > button { min-height: 42px; max-height: 42px; }
 #txt2img_generate_line2, #img2img_generate_line2, #txt2img_tools, #img2img_tools { display: flex; }
-#txt2img_generate_line2 > button, #img2img_generate_line2 > button, #extras_generate_box > button, #txt2img_tools > button, #img2img_tools > button { height: 2.2em; line-height: 0; font-size: 1em; min-width: unset; display: block !important; }
+#txt2img_generate_line2 > button, #img2img_generate_line2 > button, #extras_generate_box > button, #txt2img_tools > button, #img2img_tools > button { height: 2.2em; line-height: 0; font-size: var(--input-text-size); min-width: unset; display: block !important; }
 #txt2img_prompt, #txt2img_neg_prompt, #img2img_prompt, #img2img_neg_prompt { display: contents; }
 .interrogate-col{ min-width: 0 !important; max-width: fit-content; gap: 0.5em; }
 .interrogate-col > button{ flex: 1; }
@@ -239,7 +243,7 @@ table.settings-value-table td { padding: 0.4em; border: 1px solid #ccc; max-widt
 .extra-networks .search { flex: 1; }
 .extra-networks .description { flex: 3; }
 .extra-networks .tab-nav > button { margin-right: 0; height: 24px; padding: 2px 4px 2px 4px; }
-.extra-networks .buttons { position: absolute; right: 0; margin: -4px; }
+.extra-networks .buttons { position: absolute; right: 0; margin: -4px; background: var(--background-color); }
 .extra-networks .custom-button { width: 120px; width: 100%; background: none; justify-content: left; text-align: left; padding: 2px 8px 2px 16px; text-indent: -8px; box-shadow: none; line-break: auto; }
 .extra-networks .custom-button:hover { background: var(--button-primary-background-fill) }
 .extra-networks-tab { padding: 0 !important; }
@@ -324,6 +328,19 @@ div.controlnet_main_options { display: grid; grid-template-columns: 1fr 1fr; gri
 
 /* custom component */
 .folder-selector textarea { height: 2em !important; padding: 6px !important; }
+.nvml {
+  position: fixed;
+  top: 100px;
+  left: 100px;
+  background: var(--background-fill-primary);
+  border: 1px solid var(--button-primary-border-color);
+  padding: 6px;
+  color: var(--button-primary-text-color);
+  font-size: 0.7em;
+  z-index: 50;
+  font-family: monospace;
+  display: none;
+}
 
 /* Workaround for Gradio dropdowns capturing clicks during and after fadeout */
 .gradio-dropdown > label > div > div:first-child:not(.showOptions) ~ ul.options { pointer-events: none; }
