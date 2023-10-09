@@ -151,6 +151,9 @@ class State:
         devices.torch_gc()
 
     def end(self):
+        if self.time_start is None: # someone called end before being
+            log.debug(f'Access state.end: {sys._getframe().f_back.f_code.co_name}') # pylint: disable=protected-access
+            self.time_start = time.time()
         log.debug(f'State end: {self.job} time={time.time() - self.time_start:.2f}s')
         self.job = ""
         self.job_count = 0
@@ -350,6 +353,8 @@ def writefile(data, filename, mode='w', silent=False):
             # skipkeys=True, ensure_ascii=True, check_circular=True, allow_nan=True
             if type(data) == dict:
                 output = json.dumps(data, indent=2, default=default)
+            elif type(data) == list:
+                output = json.dumps(data, indent=2, default=default)
             elif isinstance(data, object):
                 simple = {}
                 for k in data.__dict__:
@@ -405,9 +410,9 @@ options_templates.update(options_section(('optimizations', "Optimizations"), {
     "sub_quad_kv_chunk_size": OptionInfo(512, "cross-attention kv chunk size", gr.Slider, {"minimum": 0, "maximum": 8192, "step": 8}),
     "sub_quad_chunk_threshold": OptionInfo(80, "cross-attention chunking threshold", gr.Slider, {"minimum": 0, "maximum": 100, "step": 1}),
     "token_merging_sep": OptionInfo("<h2>Token Merging</h2>", "", gr.HTML),
-    "token_merging_ratio": OptionInfo(0.0, "Token merging ratio", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
-    "token_merging_ratio_img2img": OptionInfo(0.0, "Token merging ratio for img2img", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
-    "token_merging_ratio_hr": OptionInfo(0.0, "Token merging ratio for hires pass", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
+    "token_merging_ratio": OptionInfo(0.0, "Token merging ratio (txt2img)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
+    "token_merging_ratio_img2img": OptionInfo(0.0, "Token merging ratio (img2img)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
+    "token_merging_ratio_hr": OptionInfo(0.0, "Token merging ratio for (hires)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
     "inference_mode": OptionInfo("no-grad", "Torch inference mode", gr.Radio, lambda: {"choices": ["no-grad", "inference-mode", "none"]}),
     "sd_vae_sliced_encode": OptionInfo(False, "VAE Slicing (original)"),
 }))
@@ -426,8 +431,6 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
     "opt_channelslast": OptionInfo(False, "Use channels last as torch memory format "),
     "cudnn_benchmark": OptionInfo(False, "Enable full-depth cuDNN benchmark feature"),
     "ipex_optimize": OptionInfo(True if devices.backend == "ipex" else False, "Enable IPEX Optimize for Intel GPUs"),
-    "openvino_multi_gpu": OptionInfo(False, "OpenVINO use Multi GPU"),
-    "openvino_remove_igpu_from_multi": OptionInfo(False, "OpenVINO remove iGPU from Multi GPU"),
     "directml_memory_provider": OptionInfo(default_memory_provider, 'DirectML memory stats provider', gr.Radio, lambda: {"choices": memory_providers}),
     "torch_gc_threshold": OptionInfo(90, "VRAM usage threshold before running Torch GC to clear up VRAM", gr.Slider, {"minimum": 0, "maximum": 100, "step": 1}),
     "cuda_compile_sep": OptionInfo("<h2>Model Compile</h2>", "", gr.HTML),
@@ -436,6 +439,9 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
     "cuda_compile_mode": OptionInfo("default", "Model compile mode", gr.Radio, lambda: {"choices": ['default', 'reduce-overhead', 'max-autotune']}),
     "cuda_compile_fullgraph": OptionInfo(False, "Model compile fullgraph"),
     "cuda_compile_precompile": OptionInfo(False, "Model compile precompile"),
+    "openvino_disable_model_caching": OptionInfo(False, "OpenVINO disable model caching"),
+    "openvino_multi_gpu": OptionInfo(False, "OpenVINO use Multi GPU"),
+    "openvino_remove_igpu_from_multi": OptionInfo(False, "OpenVINO remove iGPU from Multi GPU"),
     "cuda_compile_verbose": OptionInfo(False, "Model compile verbose mode"),
     "cuda_compile_errors": OptionInfo(True, "Model compile suppress errors"),
 }))
@@ -459,6 +465,7 @@ options_templates.update(options_section(('diffusers', "Diffusers Settings"), {
     "diffusers_force_zeros": OptionInfo(True, "Force zeros for prompts when empty"),
     "diffusers_aesthetics_score": OptionInfo(False, "Require aesthetics score"),
     "diffusers_force_inpaint": OptionInfo(False, 'Diffusers force inpaint pipeline'),
+    "diffusers_pooled": OptionInfo("default", "Diffusers SDXL pooled embeds (experimental)", gr.Radio, lambda: {"choices": ['default', 'weighted']}),
 }))
 
 options_templates.update(options_section(('system-paths', "System Paths"), {
@@ -519,7 +526,7 @@ options_templates.update(options_section(('saving-paths', "Image Naming & Paths"
     "save_images_add_number": OptionInfo(True, "Add number to filename when saving", component_args=hide_dirs),
     "use_original_name_batch": OptionInfo(True, "Use original name for output filename during batch process"),
     "use_upscaler_name_as_suffix": OptionInfo(True, "Use upscaler name as filename suffix in the extras tab", gr.Checkbox, {"visible": False}),
-    "samples_filename_pattern": OptionInfo("[seq]-[prompt_words]", "Images filename pattern", component_args=hide_dirs),
+    "samples_filename_pattern": OptionInfo("[seq]-[model_name]-[prompt_words]", "Images filename pattern", component_args=hide_dirs),
 
     "outdir_sep_dirs": OptionInfo("<h2>Directories</h2>", "", gr.HTML),
     "save_to_dirs": OptionInfo(False, "Save images to a subdirectory"),
@@ -545,6 +552,7 @@ options_templates.update(options_section(('ui', "User Interface"), {
     "gradio_theme": OptionInfo("black-teal", "UI theme", gr.Dropdown, lambda: {"choices": list_themes()}, refresh=refresh_themes),
     "theme_style": OptionInfo("Auto", "Theme mode", gr.Radio, {"choices": ["Auto", "Dark", "Light"]}),
     "tooltips": OptionInfo("UI Tooltips", "UI tooltips", gr.Radio, {"choices": ["None", "Browser default", "UI tooltips"], "visible": False}),
+    "compact_view": OptionInfo(False, "Compact view"),
     "return_grid": OptionInfo(True, "Show grid in results"),
     "return_mask": OptionInfo(False, "For inpainting, include the greyscale mask in results"),
     "return_mask_composite": OptionInfo(False, "For inpainting, include masked composite in results"),
@@ -560,9 +568,9 @@ options_templates.update(options_section(('ui', "User Interface"), {
 }))
 
 options_templates.update(options_section(('live-preview', "Live Previews"), {
-    "show_progressbar": OptionInfo(True, "Show progressbar"),
-    "live_previews_enable": OptionInfo(True, "Show live previews of the created image"),
-    "show_progress_grid": OptionInfo(True, "Show previews of all images generated in a batch as a grid"),
+    "show_progressbar": OptionInfo(True, "Show progressbar", gr.Checkbox, {"visible": False}),
+    "live_previews_enable": OptionInfo(True, "Show live previews of the created image", gr.Checkbox, {"visible": False}),
+    "show_progress_grid": OptionInfo(True, "Show previews of all images generated in a batch as a grid", gr.Checkbox, {"visible": False}),
     "notification_audio_enable": OptionInfo(False, "Play a sound when images are finished generating"),
     "notification_audio_path": OptionInfo("html/notification.mp3","Path to notification sound", component_args=hide_dirs, folder=True),
     "show_progress_every_n_steps": OptionInfo(1, "Live preview display period", gr.Slider, {"minimum": -1, "maximum": 32, "step": 1}),
@@ -583,18 +591,19 @@ options_templates.update(options_section(('sampler-params', "Sampler Settings"),
     "schedulers_brownian_noise": OptionInfo(True, "Use Brownian noise", gr.Checkbox, {"visible": False}),
     "schedulers_discard_penultimate": OptionInfo(True, "Discard penultimate sigma", gr.Checkbox, {"visible": False}),
     "schedulers_sigma": OptionInfo("default", "Sigma algorithm", gr.Radio, {"choices": ['default', 'karras', 'exponential', 'polyexponential'], "visible": False}),
-    # managed from ui.py for backend diffusers
     "schedulers_use_karras": OptionInfo(True, "Use Karras sigmas", gr.Checkbox, {"visible": False}),
     "schedulers_use_thresholding": OptionInfo(False, "Use dynamic thresholding", gr.Checkbox, {"visible": False}),
     "schedulers_use_loworder": OptionInfo(True, "Use simplified solvers in final steps", gr.Checkbox, {"visible": False}),
     "schedulers_prediction_type": OptionInfo("default", "Override model prediction type", gr.Radio, lambda: {"choices": ['default', 'epsilon', 'sample', 'v-prediction'], "visible": False}),
 
+    # managed from ui.py for backend diffusers
     "schedulers_sep_diffusers": OptionInfo("<h2>Diffusers specific config</h2>", "", gr.HTML),
     "schedulers_dpm_solver": OptionInfo("sde-dpmsolver++", "DPM solver algorithm", gr.Radio, lambda: {"choices": ['dpmsolver', 'dpmsolver++', 'sde-dpmsolver', 'sde-dpmsolver++']}),
     "schedulers_beta_schedule": OptionInfo("default", "Override beta schedule", gr.Radio, lambda: {"choices": ['default', 'linear', 'scaled_linear', 'squaredcos_cap_v2']}),
     'schedulers_beta_start': OptionInfo(0, "Override beta start", gr.Number, {}),
     'schedulers_beta_end': OptionInfo(0, "Override beta end", gr.Number, {}),
 
+    # managed from ui.py for backend original k-diffusion
     "schedulers_sep_kdiffusers": OptionInfo("<h2>K-Diffusion specific config</h2>", "", gr.HTML),
     "always_batch_cond_uncond": OptionInfo(False, "Disable conditional batching enabled on low memory systems"),
     "enable_quantization": OptionInfo(True, "Enable quantization for sharper and cleaner results"),
@@ -604,10 +613,6 @@ options_templates.update(options_section(('sampler-params', "Sampler Settings"),
     's_noise': OptionInfo(1.0, "Sigma noise", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
     's_min':  OptionInfo(0.0, "Sigma min",  gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
     's_max':  OptionInfo(0.0, "Sigma max",  gr.Slider, {"minimum": 0.0, "maximum": 100.0, "step": 1.0}),
-    # 'discard_next_to_last_sigma': OptionInfo("default", "Discard penultimate sigma", gr.Radio, lambda: {"choices": ['default', 'always', 'never']}),
-    # 'always_discard_next_to_last_sigma': OptionInfo(False, "Always discard next-to-last sigma"),
-    # 'never_discard_next_to_last_sigma': OptionInfo(False, "Never discard next-to-last sigma"),
-
     "schedulers_sep_compvis": OptionInfo("<h2>CompVis specific config</h2>", "", gr.HTML),
     'uni_pc_variant': OptionInfo("bh1", "UniPC variant", gr.Radio, {"choices": ["bh1", "bh2", "vary_coeff"]}),
     'uni_pc_skip_type': OptionInfo("time_uniform", "UniPC skip type", gr.Radio, {"choices": ["time_uniform", "time_quadratic", "logSNR"]}),
@@ -670,6 +675,7 @@ options_templates.update(options_section(('interrogate', "Interrogate"), {
 
 options_templates.update(options_section(('extra_networks', "Extra Networks"), {
     "extra_networks": OptionInfo(["All"], "Extra networks", ui_components.DropdownMulti, lambda: {"choices": ['All'] + [en.title for en in extra_networks]}),
+    "extra_networks_styles": OptionInfo(True, "Show built-in styles"),
     "extra_networks_card_cover": OptionInfo("sidebar", "UI position", gr.Radio, lambda: {"choices": ["cover", "inline", "sidebar"]}),
     "extra_networks_height": OptionInfo(53, "UI height (%)", gr.Slider, {"minimum": 10, "maximum": 100, "step": 1}),
     "extra_networks_sidebar_width": OptionInfo(35, "UI sidebar width (%)", gr.Slider, {"minimum": 10, "maximum": 80, "step": 1}),
@@ -677,9 +683,9 @@ options_templates.update(options_section(('extra_networks', "Extra Networks"), {
     "extra_networks_card_square": OptionInfo(True, "UI disable variable aspect ratio"),
     "extra_networks_card_fit": OptionInfo("cover", "UI image contain method", gr.Radio, lambda: {"choices": ["contain", "cover", "fill"], "visible": False}),
     "extra_network_skip_indexing": OptionInfo(False, "Do not automatically build extra network pages", gr.Checkbox),
-    "lyco_patch_lora": OptionInfo(False, "Use LyCoris handler for all LoRA types", gr.Checkbox),
+    "lyco_patch_lora": OptionInfo(False, "Use LyCoris handler for all LoRA types", gr.Checkbox, { "visible": False }),
     "lora_functional": OptionInfo(False, "Use Kohya method for handling multiple LoRA", gr.Checkbox, { "visible": False }),
-    "extra_networks_default_multiplier": OptionInfo(1.0, "Multiplier for extra networks", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
+    "extra_networks_default_multiplier": OptionInfo(1.0, "Default multiplier for extra networks", gr.Slider, {"minimum": 0.0, "maximum": 1.0, "step": 0.01}),
     "sd_hypernetwork": OptionInfo("None", "Add hypernetwork to prompt", gr.Dropdown, lambda: { "choices": ["None"] + list(hypernetworks.keys()), "visible": False }, refresh=reload_hypernetworks),
 }))
 
@@ -1007,19 +1013,21 @@ def get_version():
     return version
 
 
-def req(url_addr, **kwargs):
-    headers = { 'Content-type': 'application/json' }
+def req(url_addr, headers = None, **kwargs):
+    if headers is None:
+        headers = { 'Content-type': 'application/json' }
     try:
         res = requests.get(url_addr, timeout=30, headers=headers, verify=False, allow_redirects=True, **kwargs)
     except Exception as e:
-        log.error(f'HTTP request error: url={url} {e}')
-        res = { 'status_code': 500, 'text': f'HTTP request error: url={url} {e}' }
+        log.error(f'HTTP request error: url={url_addr} {e}')
+        res = { 'status_code': 500, 'text': f'HTTP request error: url={url_addr} {e}' }
         res = SimpleNamespace(**res)
     return res
 
 class Shared(sys.modules[__name__].__class__): # this class is here to provide sd_model field as a property, so that it can be created and loaded on demand rather than at program startup.
     @property
     def sd_model(self):
+        # log.debug(f'Access shared.sd_model: {sys._getframe().f_back.f_code.co_name}') # pylint: disable=protected-access
         import modules.sd_models # pylint: disable=W0621
         return modules.sd_models.model_data.get_sd_model()
 
@@ -1045,6 +1053,10 @@ class Shared(sys.modules[__name__].__class__): # this class is here to provide s
     @property
     def sd_model_type(self):
         try:
+            import modules.sd_models # pylint: disable=W0621
+            if modules.sd_models.model_data.sd_model is None:
+                model_type = 'none'
+                return model_type
             if backend == Backend.ORIGINAL:
                 model_type = 'ldm'
             elif "StableDiffusionXL" in self.sd_model.__class__.__name__:
@@ -1062,6 +1074,10 @@ class Shared(sys.modules[__name__].__class__): # this class is here to provide s
     @property
     def sd_refiner_type(self):
         try:
+            import modules.sd_models # pylint: disable=W0621
+            if modules.sd_models.model_data.sd_refiner is None:
+                model_type = 'none'
+                return model_type
             if backend == Backend.ORIGINAL:
                 model_type = 'ldm'
             elif "StableDiffusionXL" in self.sd_refiner.__class__.__name__:
