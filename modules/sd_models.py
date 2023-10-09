@@ -380,8 +380,8 @@ def read_metadata_from_safetensors(filename):
 
 
 def read_state_dict(checkpoint_file, map_location=None): # pylint: disable=unused-argument
-    if shared.backend == shared.Backend.DIFFUSERS:
-        return None
+    #if shared.backend == shared.Backend.DIFFUSERS:
+        #return None
     try:
         pl_sd = None
         with progress.open(checkpoint_file, 'rb', description=f'[cyan]Loading weights: [yellow]{checkpoint_file}', auto_refresh=True, console=shared.console) as f:
@@ -1240,6 +1240,9 @@ def apply_token_merging(sd_model, token_merging_ratio=0):
     except Exception:
         pass
     if token_merging_ratio > 0:
+        if shared.opts.hypertile_unet_enabled:
+            shared.log.warning('Token merging not supported with HyperTile for UNet')
+            return
         try:
             tomesd.apply_patch(
                 sd_model,
@@ -1249,7 +1252,7 @@ def apply_token_merging(sd_model, token_merging_ratio=0):
                 merge_crossattn=False,
                 merge_mlp=False
             )
-            shared.log.debug(f'Applying token merging: ratio={token_merging_ratio}')
+            shared.log.info(f'Applying token merging: ratio={token_merging_ratio}')
             sd_model.applied_token_merged_ratio = token_merging_ratio
         except Exception:
             shared.log.warning(f'Token merging not supported: pipeline={sd_model.__class__.__name__}')

@@ -1,7 +1,7 @@
 import os
 import html
 import json
-from modules import shared, ui_extra_networks
+from modules import shared, extra_networks, ui_extra_networks, styles
 
 
 class ExtraNetworksPageStyles(ui_extra_networks.ExtraNetworksPage):
@@ -57,7 +57,7 @@ class ExtraNetworksPageStyles(ui_extra_networks.ExtraNetworksPage):
             "description": '',
             "prompt": params.get('Prompt', ''),
             "negative": params.get('Negative prompt', ''),
-            "extra": '', # TODO add extras to styles
+            "extra": '',
             "local_preview": f"{name}.{shared.opts.samples_format}",
         }
         return item
@@ -92,3 +92,34 @@ class ExtraNetworksPageStyles(ui_extra_networks.ExtraNetworksPage):
 
     def allowed_directories_for_previews(self):
         return [v for v in [shared.opts.styles_dir] if v is not None] + ['html']
+
+
+class ExtraNetworkStyles(extra_networks.ExtraNetwork):
+    def __init__(self):
+        super().__init__('style')
+        self.indexes = {}
+
+    def activate(self, p, params_list):
+        for param in params_list:
+            if len(param.items) > 0:
+                style = None
+                search = param.items[0]
+                # style = shared.prompt_styles.find_style(param.items[0])
+                match = [s for s in shared.prompt_styles.styles.values() if s.name == search]
+                if len(match) > 0:
+                    style = match[0]
+                else:
+                    match = [s for s in shared.prompt_styles.styles.values() if s.name.startswith(search)]
+                    if len(match) > 0:
+                        i = self.indexes.get(search, 0)
+                        self.indexes[search] = (i + 1) % len(match)
+                        style = match[self.indexes[search]]
+                if style is not None:
+                    p.styles.append(style.name)
+                    p.prompts = [styles.merge_prompts(style.prompt, prompt) for prompt in p.prompts]
+                    p.negative_prompts = [styles.merge_prompts(style.negative_prompt, prompt) for prompt in p.negative_prompts]
+                    styles.apply_styles_to_extra(p, style)
+
+
+    def deactivate(self, p):
+        pass

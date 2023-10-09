@@ -1,7 +1,7 @@
 from typing import Union
-import logging
 import os
 import re
+import time
 import lora_patches
 import network
 import network_lora
@@ -10,10 +10,24 @@ import network_ia3
 import network_lokr
 import network_full
 import network_norm
+import lora_convert
 import torch
+import diffusers.models.lora
 from modules import shared, devices, sd_models, errors, scripts, sd_hijack
 
 
+debug = os.environ.get('SD_LORA_DEBUG', None)
+originals: lora_patches.LoraPatches = None
+extra_network_lora = None
+available_networks = {}
+available_network_aliases = {}
+loaded_networks = []
+timer = { 'load': 0, 'apply': 0, 'restore': 0 }
+# networks_in_memory = {}
+lora_cache = {}
+available_network_hash_lookup = {}
+forbidden_network_aliases = {}
+re_network_name = re.compile(r"(.*)\s*\([0-9a-fA-F]+\)")
 module_types = [
     network_lora.ModuleTypeLora(),
     network_hada.ModuleTypeHada(),
@@ -22,75 +36,6 @@ module_types = [
     network_full.ModuleTypeFull(),
     network_norm.ModuleTypeNorm(),
 ]
-
-
-re_digits = re.compile(r"\d+")
-re_x_proj = re.compile(r"(.*)_([qkv]_proj)$")
-re_compiled = {}
-
-suffix_conversion = {
-    "attentions": {},
-    "resnets": {
-        "conv1": "in_layers_2",
-        "conv2": "out_layers_3",
-        "norm1": "in_layers_0",
-        "norm2": "out_layers_0",
-        "time_emb_proj": "emb_layers_1",
-        "conv_shortcut": "skip_connection",
-    }
-}
-
-
-def convert_diffusers_name_to_compvis(key, is_sd2):
-    def match(match_list, regex_text):
-        regex = re_compiled.get(regex_text)
-        if regex is None:
-            regex = re.compile(regex_text)
-            re_compiled[regex_text] = regex
-        r = re.match(regex, key)
-        if not r:
-            return False
-        match_list.clear()
-        match_list.extend([int(x) if re.match(re_digits, x) else x for x in r.groups()])
-        return True
-
-    m = []
-    if match(m, r"lora_unet_conv_in(.*)"):
-        return f'diffusion_model_input_blocks_0_0{m[0]}'
-    if match(m, r"lora_unet_conv_out(.*)"):
-        return f'diffusion_model_out_2{m[0]}'
-    if match(m, r"lora_unet_time_embedding_linear_(\d+)(.*)"):
-        return f"diffusion_model_time_embed_{m[0] * 2 - 2}{m[1]}"
-    if match(m, r"lora_unet_down_blocks_(\d+)_(attentions|resnets)_(\d+)_(.+)"):
-        suffix = suffix_conversion.get(m[1], {}).get(m[3], m[3])
-        return f"diffusion_model_input_blocks_{1 + m[0] * 3 + m[2]}_{1 if m[1] == 'attentions' else 0}_{suffix}"
-    if match(m, r"lora_unet_mid_block_(attentions|resnets)_(\d+)_(.+)"):
-        suffix = suffix_conversion.get(m[0], {}).get(m[2], m[2])
-        return f"diffusion_model_middle_block_{1 if m[0] == 'attentions' else m[1] * 2}_{suffix}"
-    if match(m, r"lora_unet_up_blocks_(\d+)_(attentions|resnets)_(\d+)_(.+)"):
-        suffix = suffix_conversion.get(m[1], {}).get(m[3], m[3])
-        return f"diffusion_model_output_blocks_{m[0] * 3 + m[2]}_{1 if m[1] == 'attentions' else 0}_{suffix}"
-    if match(m, r"lora_unet_down_blocks_(\d+)_downsamplers_0_conv"):
-        return f"diffusion_model_input_blocks_{3 + m[0] * 3}_0_op"
-    if match(m, r"lora_unet_up_blocks_(\d+)_upsamplers_0_conv"):
-        return f"diffusion_model_output_blocks_{2 + m[0] * 3}_{2 if m[0]>0 else 1}_conv"
-    if match(m, r"lora_te_text_model_encoder_layers_(\d+)_(.+)"):
-        if is_sd2:
-            if 'mlp_fc1' in m[1]:
-                return f"model_transformer_resblocks_{m[0]}_{m[1].replace('mlp_fc1', 'mlp_c_fc')}"
-            elif 'mlp_fc2' in m[1]:
-                return f"model_transformer_resblocks_{m[0]}_{m[1].replace('mlp_fc2', 'mlp_c_proj')}"
-            else:
-                return f"model_transformer_resblocks_{m[0]}_{m[1].replace('self_attn', 'attn')}"
-        return f"transformer_text_model_encoder_layers_{m[0]}_{m[1]}"
-    if match(m, r"lora_te2_text_model_encoder_layers_(\d+)_(.+)"):
-        if 'mlp_fc1' in m[1]:
-            return f"1_model_transformer_resblocks_{m[0]}_{m[1].replace('mlp_fc1', 'mlp_c_fc')}"
-        elif 'mlp_fc2' in m[1]:
-            return f"1_model_transformer_resblocks_{m[0]}_{m[1].replace('mlp_fc2', 'mlp_c_proj')}"
-        else:
-            return f"1_model_transformer_resblocks_{m[0]}_{m[1].replace('self_attn', 'attn')}"
-    return key
 
 
 def assign_network_names_to_compvis_modules(sd_model):
@@ -109,49 +54,53 @@ def assign_network_names_to_compvis_modules(sd_model):
             network_layer_mapping[network_name] = module
             module.network_layer_name = network_name
     """
-    if not hasattr(shared.sd_model, 'cond_stage_model'):
-        return
     network_layer_mapping = {}
-    for name, module in shared.sd_model.cond_stage_model.wrapped.named_modules():
-        network_name = name.replace(".", "_")
-        network_layer_mapping[network_name] = module
-        module.network_layer_name = network_name
-    for name, module in shared.sd_model.model.named_modules():
-        network_name = name.replace(".", "_")
-        network_layer_mapping[network_name] = module
-        module.network_layer_name = network_name
+    if shared.backend == shared.Backend.DIFFUSERS:
+        for name, module in shared.sd_model.text_encoder.named_modules():
+            prefix = "lora_te1_" if shared.sd_model_type == "sdxl" else "lora_te_"
+            network_name = prefix + name.replace(".", "_")
+            network_layer_mapping[network_name] = module
+            module.network_layer_name = network_name
+        if shared.sd_model_type == "sdxl":
+            for name, module in shared.sd_model.text_encoder_2.named_modules():
+                network_name = "lora_te2_" + name.replace(".", "_")
+                network_layer_mapping[network_name] = module
+                module.network_layer_name = network_name
+        for name, module in shared.sd_model.unet.named_modules():
+            network_name = "lora_unet_" + name.replace(".", "_")
+            network_layer_mapping[network_name] = module
+            module.network_layer_name = network_name
+    else:
+        if not hasattr(shared.sd_model, 'cond_stage_model'):
+            return
+        for name, module in shared.sd_model.cond_stage_model.wrapped.named_modules():
+            network_name = name.replace(".", "_")
+            network_layer_mapping[network_name] = module
+            module.network_layer_name = network_name
+        for name, module in shared.sd_model.model.named_modules():
+            network_name = name.replace(".", "_")
+            network_layer_mapping[network_name] = module
+            module.network_layer_name = network_name
     sd_model.network_layer_mapping = network_layer_mapping
 
 
 def load_network(name, network_on_disk):
+    t0 = time.time()
+    cached = lora_cache.get(name, None)
+    if debug:
+        shared.log.debug(f'LoRA load: name={name} file={network_on_disk.filename} {"cached" if cached else ""}')
+    if cached is not None:
+        return cached
     net = network.Network(name, network_on_disk)
     net.mtime = os.path.getmtime(network_on_disk.filename)
     sd = sd_models.read_state_dict(network_on_disk.filename)
-    # this should not be needed but is here as an emergency fix for an unknown error people are experiencing in 1.2.0
-    if not hasattr(shared.sd_model, 'network_layer_mapping'):
-        assign_network_names_to_compvis_modules(shared.sd_model)
+    assign_network_names_to_compvis_modules(shared.sd_model) # this should not be needed but is here as an emergency fix for an unknown error people are experiencing in 1.2.0
     keys_failed_to_match = {}
-    is_sd2 = 'model_transformer_resblocks' in shared.sd_model.network_layer_mapping
     matched_networks = {}
+    convert = lora_convert.KeyConvert()
     for key_network, weight in sd.items():
         key_network_without_network_parts, network_part = key_network.split(".", 1)
-        key = convert_diffusers_name_to_compvis(key_network_without_network_parts, is_sd2)
-        sd_module = shared.sd_model.network_layer_mapping.get(key, None)
-        if sd_module is None:
-            m = re_x_proj.match(key)
-            if m:
-                sd_module = shared.sd_model.network_layer_mapping.get(m.group(1), None)
-        # SDXL loras seem to already have correct compvis keys, so only need to replace "lora_unet" with "diffusion_model"
-        if sd_module is None and "lora_unet" in key_network_without_network_parts:
-            key = key_network_without_network_parts.replace("lora_unet", "diffusion_model")
-            sd_module = shared.sd_model.network_layer_mapping.get(key, None)
-        elif sd_module is None and "lora_te1_text_model" in key_network_without_network_parts:
-            key = key_network_without_network_parts.replace("lora_te1_text_model", "0_transformer_text_model")
-            sd_module = shared.sd_model.network_layer_mapping.get(key, None)
-            # some SD1 Loras also have correct compvis keys
-            if sd_module is None:
-                key = key_network_without_network_parts.replace("lora_te1_text_model", "transformer_text_model")
-                sd_module = shared.sd_model.network_layer_mapping.get(key, None)
+        key, sd_module = convert(key_network_without_network_parts)
         if sd_module is None:
             keys_failed_to_match[key_network] = key
             continue
@@ -168,37 +117,21 @@ def load_network(name, network_on_disk):
             raise AssertionError(f"Could not find a module type (out of {', '.join([x.__class__.__name__ for x in module_types])}) that would accept those keys: {', '.join(weights.w)}")
         net.modules[key] = net_module
     if keys_failed_to_match:
-        logging.debug(f"Network {network_on_disk.filename} didn't match keys: {keys_failed_to_match}")
+        shared.log.warning(f"LoRA unmatched keys: file={network_on_disk.filename} keys={len(keys_failed_to_match)}")
+        if debug:
+            shared.log.debug(f"LoRA unmatched keys: file={network_on_disk.filename} keys={keys_failed_to_match}")
+    lora_cache[name] = net
+    t1 = time.time()
+    timer['load'] += t1 - t0
     return net
-
-
-def load_diffusers(name, network_on_disk, te_multiplier: float, unet_multiplier: float, dyn_dim): # pylint: disable=W0613
-    net = network.Network(name, network_on_disk)
-    net.mtime = os.path.getmtime(network_on_disk.filename)
-    from modules.lora_diffusers import load_diffusers_lora
-    load_diffusers_lora(name, network_on_disk, te_multiplier, unet_multiplier, dyn_dim)
-    return net
-
-
-def purge_networks_from_memory():
-    while len(networks_in_memory) > shared.opts.lora_in_memory_limit and len(networks_in_memory) > 0:
-        name = next(iter(networks_in_memory))
-        networks_in_memory.pop(name, None)
-    devices.torch_gc()
 
 
 def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=None):
-    already_loaded = {}
-    for net in loaded_networks:
-        if net.name in names:
-            already_loaded[net.name] = net
-    loaded_networks.clear()
     networks_on_disk = [available_network_aliases.get(name, None) for name in names]
     if any(x is None for x in networks_on_disk):
         list_available_networks()
         networks_on_disk = [available_network_aliases.get(name, None) for name in names]
     failed_to_load_networks = []
-
     recompile_model = False
     if shared.opts.cuda_compile and shared.opts.cuda_compile_backend == "openvino_fx":
         if len(names) == len(shared.compiled_model_state.lora_model):
@@ -214,55 +147,55 @@ def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=No
         shared.opts.cuda_compile = False
         sd_models.reload_model_weights(op='model')
         shared.opts.cuda_compile = True
-
+    loaded_networks.clear()
     for i, (network_on_disk, name) in enumerate(zip(networks_on_disk, names)):
-        net = already_loaded.get(name, None)
         if network_on_disk is not None:
-            if net is None:
-                net = networks_in_memory.get(name)
-            if net is None or os.path.getmtime(network_on_disk.filename) > net.mtime:
-                try:
-                    if shared.backend == shared.Backend.ORIGINAL:
-                        net = load_network(name, network_on_disk)
-                        networks_in_memory.pop(name, None)
-                        networks_in_memory[name] = net
-                    elif shared.backend == shared.Backend.DIFFUSERS:
-                        net = load_diffusers(name, network_on_disk, te_multipliers[i] if te_multipliers else 1.0, unet_multipliers[i] if unet_multipliers else 1.0, dyn_dims[i] if dyn_dims else 1.0)
-                except Exception as e:
-                    errors.display(e, f"loading network {network_on_disk.filename}")
-                    continue
+            try:
+                net = load_network(name, network_on_disk)
+            except Exception as e:
+                shared.log.error(f"LoRA load failed: file={network_on_disk.filename}")
+                if debug:
+                    errors.display(e, f"LoRA load failed file={network_on_disk.filename}")
+                continue
             net.mentioned_name = name
             network_on_disk.read_hash()
         if net is None:
             failed_to_load_networks.append(name)
-            logging.info(f"Couldn't find network with name {name}")
+            shared.log.error(f"LoRA unknown network: file={network_on_disk.filename} network={name}")
             continue
-        else:
-            net.te_multiplier = te_multipliers[i] if te_multipliers else 1.0
-            net.unet_multiplier = unet_multipliers[i] if unet_multipliers else 1.0
-            net.dyn_dim = dyn_dims[i] if dyn_dims else 1.0
-            if shared.backend == shared.Backend.ORIGINAL: # load_diffusers cache is handled separately
-                loaded_networks.append(net)
+        net.te_multiplier = te_multipliers[i] if te_multipliers else 1.0
+        net.unet_multiplier = unet_multipliers[i] if unet_multipliers else 1.0
+        net.dyn_dim = dyn_dims[i] if dyn_dims else 1.0
+        loaded_networks.append(net)
     if failed_to_load_networks:
         sd_hijack.model_hijack.comments.append("Networks not found: " + ", ".join(failed_to_load_networks))
-    purge_networks_from_memory()
+
+    while len(lora_cache) > shared.opts.lora_in_memory_limit:
+        name = next(iter(lora_cache))
+        lora_cache.pop(name, None)
+    if len(loaded_networks) > 0 and debug:
+        shared.log.debug(f'LoRA loaded={len(loaded_networks)} cache={list(lora_cache)}')
+    devices.torch_gc()
 
     if recompile_model:
-        shared.log.info("Networks: Recompiling model")
+        shared.log.info("LoRA recompiling model")
         sd_models.compile_diffusers(shared.sd_model)
 
-def network_restore_weights_from_backup(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.MultiheadAttention]):
+
+def network_restore_weights_from_backup(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.MultiheadAttention, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv]):
+    t0 = time.time()
     weights_backup = getattr(self, "network_weights_backup", None)
     bias_backup = getattr(self, "network_bias_backup", None)
     if weights_backup is None and bias_backup is None:
         return
+    # if debug:
+    #     shared.log.debug('LoRA restore weights')
     if weights_backup is not None:
         if isinstance(self, torch.nn.MultiheadAttention):
             self.in_proj_weight.copy_(weights_backup[0])
             self.out_proj.weight.copy_(weights_backup[1])
         else:
             self.weight.copy_(weights_backup)
-
     if bias_backup is not None:
         if isinstance(self, torch.nn.MultiheadAttention):
             self.out_proj.bias.copy_(bias_backup)
@@ -273,9 +206,11 @@ def network_restore_weights_from_backup(self: Union[torch.nn.Conv2d, torch.nn.Li
             self.out_proj.bias = None
         else:
             self.bias = None
+    t1 = time.time()
+    timer['restore'] += t1 - t0
 
 
-def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.MultiheadAttention]):
+def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.MultiheadAttention, diffusers.models.lora.LoRACompatibleLinear, diffusers.models.lora.LoRACompatibleConv]):
     """
     Applies the currently selected set of networks to the weights of torch layer self.
     If weights already have this particular set of networks applied, does nothing.
@@ -284,6 +219,7 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
     network_layer_name = getattr(self, 'network_layer_name', None)
     if network_layer_name is None:
         return
+    t0 = time.time()
     current_names = getattr(self, "network_current_names", ())
     wanted_names = tuple((x.name, x.te_multiplier, x.unet_multiplier, x.dyn_dim) for x in loaded_networks)
     weights_backup = getattr(self, "network_weights_backup", None)
@@ -304,6 +240,7 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
         else:
             bias_backup = None
         self.network_bias_backup = bias_backup
+
     if current_names != wanted_names:
         network_restore_weights_from_backup(self)
         for net in loaded_networks:
@@ -314,7 +251,7 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
                         updown, ex_bias = module.calc_updown(self.weight)
                         if len(self.weight.shape) == 4 and self.weight.shape[1] == 9:
                             # inpainting model. zero pad updown to make channel[1]  4 to 9
-                            updown = torch.nn.functional.pad(updown, (0, 0, 0, 0, 0, 5))
+                            updown = torch.nn.functional.pad(updown, (0, 0, 0, 0, 0, 5)) # pylint: disable=not-callable
                         self.weight += updown
                         if ex_bias is not None and hasattr(self, 'bias'):
                             if self.bias is None:
@@ -322,7 +259,8 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
                             else:
                                 self.bias += ex_bias
                 except RuntimeError as e:
-                    logging.debug(f"Network {net.name} layer {network_layer_name}: {e}")
+                    if debug:
+                        shared.log.debug(f"LoRA apply weight network={net.name} layer={network_layer_name} {e}")
                     extra_network_lora.errors[net.name] = extra_network_lora.errors.get(net.name, 0) + 1
                 continue
             module_q = net.modules.get(network_layer_name + "_q_proj", None)
@@ -345,14 +283,17 @@ def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn
                         else:
                             self.out_proj.bias += ex_bias
                 except RuntimeError as e:
-                    logging.debug(f"Network {net.name} layer {network_layer_name}: {e}")
+                    if debug:
+                        shared.log.debug(f"LoRA network={net.name} layer={network_layer_name} {e}")
                     extra_network_lora.errors[net.name] = extra_network_lora.errors.get(net.name, 0) + 1
                 continue
             if module is None:
                 continue
-            logging.debug(f"Network {net.name} layer {network_layer_name}: couldn't find supported operation")
+            shared.log.warning(f"LoRA network={net.name} layer={network_layer_name} unsupported operation")
             extra_network_lora.errors[net.name] = extra_network_lora.errors.get(net.name, 0) + 1
         self.network_current_names = wanted_names
+    t1 = time.time()
+    timer['apply'] += t1 - t0
 
 
 def network_forward(module, input, original_forward): # pylint: disable=W0622
@@ -462,8 +403,6 @@ def list_available_networks():
         available_network_aliases[name] = entry
         available_network_aliases[entry.alias] = entry
 
-re_network_name = re.compile(r"(.*)\s*\([0-9a-fA-F]+\)")
-
 
 def infotext_pasted(infotext, params): # pylint: disable=W0613
     if "AddNet Module 1" in [x[1] for x in scripts.scripts_txt2img.infotext_fields]:
@@ -487,12 +426,4 @@ def infotext_pasted(infotext, params): # pylint: disable=W0613
         params["Prompt"] += "\n" + "".join(added)
 
 
-originals: lora_patches.LoraPatches = None
-extra_network_lora = None
-available_networks = {}
-available_network_aliases = {}
-loaded_networks = []
-networks_in_memory = {}
-available_network_hash_lookup = {}
-forbidden_network_aliases = {}
 list_available_networks()

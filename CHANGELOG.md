@@ -1,19 +1,17 @@
 # Change Log for SD.Next
 
-## Update for 2023-10-05
+## Update for 2023-10-08
 
-**TBD**: Candidates before release:  
-- Implement Lyco for *backend:diffusers*
-- Add FreeU for *backend:diffusers*  
-  for *backend:original* use extension: <https://github.com/ljleb/sd-webui-freeu>  
-- Add HyperTile: <https://github.com/tfernd/HyperTile>
-- Implement styles extra field
+- Final strech of the DEV branch before merge to master  
+- Requires pending `diffusers==0.22.0`
 
-This is a big one, with some major changes and new functionality...  
-And probably the biggest release since introduction of **Diffusers**  
+This is a major release, with many changes and new functionality...  
 
-Note that for this release its recommended to perform a clean install (fresh `git clone`)  
-Upgrades are still possible and supported, but above is recommended for best experience  
+Note that for this release its recommended to perform a clean install (e.g. fresh `git clone`)  
+Upgrades are still possible and supported, but clean install is recommended for best experience  
+
+Changelog is massive, but do read through or you'll be missing on some very cool new functionality  
+or even free speedups and quality improvements (regardless of which workflows you're using)!  
 
 - **UI**  
   - added **change log** to UI  
@@ -42,6 +40,12 @@ Upgrades are still possible and supported, but above is recommended for best exp
     - support for embedded previews  
     - large database of art styles included by default  
       can be disabled in *settings -> extra networks -> show built-in*  
+    - styles can also be used in a prompt directly: `<style:style_name>`  
+      if style if an exact match, it will be used  
+      otherwise it will rotate between styles that match the start of the name  
+      that way you can use different styles as wildcards when processing batches  
+    - styles can have **extra** fields, not just prompt and negative prompt  
+      for example: *"Extra: sampler: Euler a, width: 480, height: 640, steps: 30, cfg scale: 10, clip skip: 2"*
   - **VAE**  
     - VAEs are now also listed as part of extra networks  
   - **LoRA**  
@@ -129,9 +133,14 @@ Upgrades are still possible and supported, but above is recommended for best exp
   - to enable search, make sure all models have set hash values  
     *Models -> Valida -> Calculate hashes*  
 - **LoRA**
-  - for *backend:original*, lyco handler has been removed and replaced with new  
-    unified lora/lyco handler that supports all variants of loras  
+  - new unified LoRA handler for all LoRA types (lora, lyco, loha, lokr, locon, etc.)  
+    applies to both original and diffusers backend  
+    thanks @AI-Casanova for diffusers port  
+  - for *backend:original*, separate lyco handler has been removed  
 - **Compute**  
+  - **CUDA**:  
+    - default updated to `torch` *2.1.0* with cuda *12.1*  
+    - testing moved to `torch` *2.2.0-dev/cu122*  
   - **Intel Arc/IPEX**:  
     - tons of optimizations, built-in binary wheels for Windows  
       i have to say, intel arc/ipex is getting to be quite a player, especially with openvino  
@@ -139,11 +148,31 @@ Upgrades are still possible and supported, but above is recommended for best exp
   - **AMD ROCm**:  
     - updated installer to support detect `ROCm` *5.4/5.5/5.6/5.7*  
     - support for `torch-rocm-5.7`
-  - **CUDA**:  
-    - testing moved to `torch` *2.2.0-dev/cu121*  
+  - **xFormers**:
+    - default updated to *0.0.22*  
+    - note that latest xformers are still not compatible with standard torch 2.1.0 with cuda 12.1  
+      either downgrade torch to 2.0.1 with cuda 11.8 or build xformers manually  
   - **GC**:  
     - custom garbage collect threshold to reduce vram memory usage, thanks @Disty0  
       see *settings -> compute -> gc*  
+- **Inference**  
+  - new section in **settings**  
+    - [Token Merging](https://github.com/dbolya/tomesd): not new, but updated  
+      available for *diffusers* and *original* backends  
+      speed-up your generations by merging redundant tokens  
+      speed up will depend on how aggressive you want to be with token merging  
+    - [Free-U](https://github.com/ChenyangSi/FreeU): new!  
+      available for *diffusers* and *original* backends  
+      improve generations quality at no cost (other than finding params that work for you)  
+      thanks @ljleb
+    - [HyperTile](https://github.com/tfernd/HyperTile): new!  
+      available for *diffusers* and *original* backends  
+      massive (up to 2x) speed-up your generations for free :)
+      thanks @tfernd
+    - **Batch mode**  
+      new option *settings -> inference -> batch mode*  
+      when using img2img process batch, process multiple images in batch in parallel  
+      thanks @Symbiomatrix
 - **General**  
   - **Startup**  
     - all main CLI parameters can now be set as environment variable as well  
