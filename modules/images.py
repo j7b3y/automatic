@@ -338,7 +338,7 @@ class FilenameGenerator:
                     outres = f'{outres}{expected}'
                 else:
                     outres = outres if default == "" else f'{outres}{default}'
-        return sanitize_filename_part(outres)
+        return outres
     
     def spsf(self, *args):
         lower = self.prompt.lower()
@@ -356,7 +356,7 @@ class FilenameGenerator:
                     outres = f'{outres}{recipient}'
                 else:
                     outres = outres if default == "" else f'{outres}{default}'
-        return sanitize_filename_part(outres)
+        return outres
 
     def image_hash(self):
         if self.image is None:
