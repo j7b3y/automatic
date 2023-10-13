@@ -168,6 +168,8 @@ class StableDiffusionProcessing:
         self.s_tmin = shared.opts.s_tmin
         self.s_tmax = float('inf')  # not representable as a standard ui option
         self.comments = {}
+        self.is_api = False
+        self.resize_mode: int = 0
         shared.opts.data['clip_skip'] = clip_skip
 
     @property
@@ -900,7 +902,7 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
                     output_images.insert(0, grid)
                     index_of_first_image = 1
                 if shared.opts.grid_save:
-                    images.save_image(grid, p.outpath_grids, "", p.all_seeds[0], p.all_prompts[0], shared.opts.grid_format, info=infotext(-1), short_filename=not shared.opts.grid_extended_filename, p=p, grid=True, suffix="-grid") # main save grid
+                    images.save_image(grid, p.outpath_grids, "", p.all_seeds[0], p.all_prompts[0], shared.opts.grid_format, info=infotext(-1), p=p, grid=True, suffix="-grid") # main save grid
 
     if not p.disable_extra_networks:
         modules.extra_networks.deactivate(p, extra_network_data)
@@ -999,6 +1001,7 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
                 shared.state.job_count = self.n_iter
             shared.state.job_count = shared.state.job_count * 2
             shared.state.processing_has_refined_job_count = True
+        hypertile_set(self, hr=True)
         shared.log.debug(f'Init hires: upscaler="{self.hr_upscaler}" sampler="{self.latent_sampler}" resize={self.hr_resize_x}x{self.hr_resize_y} upscale={self.hr_upscale_to_x}x{self.hr_upscale_to_y}')
 
     def sample(self, conditioning, unconditional_conditioning, seeds, subseeds, subseed_strength, prompts):
@@ -1029,6 +1032,8 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
         self.ops.append('txt2img')
         hypertile_set(self)
         self.sampler = modules.sd_samplers.create_sampler(self.sampler_name, self.sd_model)
+        if hasattr(self.sampler, "initialize"):
+            self.sampler.initialize(self)
         x = create_random_tensors([4, self.height // 8, self.width // 8], seeds=seeds, subseeds=subseeds, subseed_strength=self.subseed_strength, seed_resize_from_h=self.seed_resize_from_h, seed_resize_from_w=self.seed_resize_from_w, p=self)
         samples = self.sampler.sample(self, x, conditioning, unconditional_conditioning, image_conditioning=self.txt2img_image_conditioning(x))
         if not self.enable_hr or shared.state.interrupted or shared.state.skipped:
@@ -1077,9 +1082,12 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
                     self.ops.append('hires')
                     devices.torch_gc() # GC now before running the next img2img to prevent running out of memory
                     self.sampler = modules.sd_samplers.create_sampler(self.latent_sampler or self.sampler_name, self.sd_model)
+                    if hasattr(self.sampler, "initialize"):
+                        self.sampler.initialize(self)
                     samples = samples[:, :, self.truncate_y//2:samples.shape[2]-(self.truncate_y+1)//2, self.truncate_x//2:samples.shape[3]-(self.truncate_x+1)//2]
                     noise = create_random_tensors(samples.shape[1:], seeds=seeds, subseeds=subseeds, subseed_strength=subseed_strength, p=self)
                     modules.sd_models.apply_token_merging(self.sd_model, self.get_token_merging_ratio(for_hr=True))
+                    hypertile_set(self, hr=True)
                     samples = self.sampler.sample_img2img(self, samples, noise, conditioning, unconditional_conditioning, steps=self.hr_second_pass_steps or self.steps, image_conditioning=image_conditioning)
                     modules.sd_models.apply_token_merging(self.sd_model, self.get_token_merging_ratio())
                 else:
@@ -1131,6 +1139,8 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
         if self.sampler_name == "PLMS":
             self.sampler_name = 'UniPC'
         self.sampler = modules.sd_samplers.create_sampler(self.sampler_name, self.sd_model)
+        if hasattr(self.sampler, "initialize"):
+            self.sampler.initialize(self)
 
         if self.image_mask is not None:
             self.ops.append('inpaint')
@@ -1170,7 +1180,7 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
             self.init_img_width = img.width # pylint: disable=attribute-defined-outside-init
             self.init_img_height = img.height # pylint: disable=attribute-defined-outside-init
             if shared.opts.save_init_img:
-                images.save_image(img, path=shared.opts.outdir_init_images, basename=None, forced_filename=self.init_img_hash, save_to_dirs=False, suffix="-init-image")
+                images.save_image(img, path=shared.opts.outdir_init_images, basename=None, forced_filename=self.init_img_hash, suffix="-init-image")
             image = images.flatten(img, shared.opts.img2img_background_color)
             if crop_region is None and self.resize_mode != 4:
                 image = images.resize_image(self.resize_mode, image, self.width, self.height)

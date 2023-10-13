@@ -117,7 +117,7 @@ def process_interrogate(interrogation_function, mode, ii_input_files, ii_input_d
         else:
             if not os.path.isdir(ii_input_dir):
                 log.error(f"Input directory not found: {ii_input_dir}")
-                return
+                return [gr.update(), None]
             images = modules.shared.listfiles(ii_input_dir)
         if ii_output_dir != "":
             os.makedirs(ii_output_dir, exist_ok=True)
@@ -261,8 +261,10 @@ def create_toprow(is_img2img):
                 negative_token_button = gr.Button(visible=False, elem_id=f"{id_part}_negative_token_button")
             with gr.Row(elem_id=f"{id_part}_styles_row"):
                 prompt_styles = gr.Dropdown(label="Styles", elem_id=f"{id_part}_styles", choices=[style.name for style in modules.shared.prompt_styles.styles.values()], value=[], multiselect=True)
-                prompt_styles_btn = gr.Button('Apply', elem_id=f"{id_part}_styles_select", visible=False)
-                prompt_styles_btn.click(_js="applyStyles", fn=parse_style, inputs=[prompt_styles], outputs=[prompt_styles])
+                prompt_styles_btn_select = gr.Button('Select', elem_id=f"{id_part}_styles_select", visible=False)
+                prompt_styles_btn_select.click(_js="applyStyles", fn=parse_style, inputs=[prompt_styles], outputs=[prompt_styles])
+                prompt_styles_btn_apply = ToolButton(symbols.apply, elem_id=f"{id_part}_extra_apply", visible=False)
+                prompt_styles_btn_apply.click(fn=apply_styles, inputs=[prompt, negative_prompt, prompt_styles], outputs=[prompt, negative_prompt, prompt_styles])
     return prompt, prompt_styles, negative_prompt, submit, button_interrogate, button_deepbooru, button_paste, button_extra, token_counter, token_button, negative_token_counter, negative_token_button
 
 
@@ -305,23 +307,23 @@ def create_sampler_and_steps_selection(choices, tabname):
         opts.data['schedulers_brownian_noise'] = 'brownian noise' in sampler_options
         opts.data['schedulers_discard_penultimate'] = 'discard penultimate sigma' in sampler_options
         opts.data['schedulers_sigma'] = sampler_algo
+        opts.save(modules.shared.config_filename, silent=True)
 
     def set_sampler_diffuser_options(sampler_options):
         opts.data['schedulers_use_karras'] = 'karras' in sampler_options
         opts.data['schedulers_use_thresholding'] = 'dynamic thresholding' in sampler_options
         opts.data['schedulers_use_loworder'] = 'low order' in sampler_options
+        opts.save(modules.shared.config_filename, silent=True)
 
     with FormRow(elem_classes=['flex-break']):
         sampler_index = gr.Dropdown(label='Sampling method', elem_id=f"{tabname}_sampling", choices=[x.name for x in choices], value='Default', type="index")
         steps = gr.Slider(minimum=0, maximum=99, step=1, label="Sampling steps", elem_id=f"{tabname}_steps", value=20)
     if modules.shared.backend == modules.shared.Backend.ORIGINAL:
         with FormRow(elem_classes=['flex-break']):
-            opts.data['schedulers_brownian_noise'] = opts.data.get('schedulers_brownian_noise', False)
-            opts.data['schedulers_discard_penultimate'] = opts.data.get('schedulers_discard_penultimate', True)
             choices = ['brownian noise', 'discard penultimate sigma']
             values = []
-            values += ['brownian noise'] if opts.data['schedulers_brownian_noise'] else []
-            values += ['discard penultimate sigma'] if opts.data['schedulers_discard_penultimate'] else []
+            values += ['brownian noise'] if opts.data.get('schedulers_brownian_noise', False) else []
+            values += ['discard penultimate sigma'] if opts.data.get('schedulers_discard_penultimate', True) else []
             sampler_options = gr.CheckboxGroup(label='Sampler options', choices=choices, value=values, type='value')
         with FormRow(elem_classes=['flex-break']):
             opts.data['schedulers_sigma'] = opts.data.get('schedulers_sigma', 'default')
@@ -330,14 +332,11 @@ def create_sampler_and_steps_selection(choices, tabname):
         sampler_algo.change(fn=set_sampler_original_options, inputs=[sampler_options, sampler_algo], outputs=[])
     else:
         with FormRow(elem_classes=['flex-break']):
-            opts.data['schedulers_use_karras'] = opts.data.get('schedulers_use_karras', True)
-            opts.data['schedulers_use_thresholding'] = opts.data.get('schedulers_use_thresholding', False)
-            opts.data['schedulers_use_loworder'] = opts.data.get('schedulers_use_loworder', True)
             choices = ['karras', 'dynamic thresholding', 'low order']
             values = []
-            values += ['karras'] if opts.data['schedulers_use_karras'] else []
-            values += ['dynamic thresholding'] if opts.data['schedulers_use_thresholding'] else []
-            values += ['low order'] if opts.data['schedulers_use_loworder'] else []
+            values += ['karras'] if opts.data.get('schedulers_use_karras', True) else []
+            values += ['dynamic thresholding'] if opts.data.get('schedulers_use_thresholding', False) else []
+            values += ['low order'] if opts.data.get('schedulers_use_loworder', True) else []
             sampler_options = gr.CheckboxGroup(label='Sampler options', choices=choices, value=values, type='value')
         sampler_options.change(fn=set_sampler_diffuser_options, inputs=[sampler_options], outputs=[])
 
@@ -543,7 +542,6 @@ def create_ui(startup_timer = None):
             negative_token_button.click(fn=wrap_queued_call(update_token_counter), inputs=[txt2img_negative_prompt, steps], outputs=[negative_token_counter])
 
             ui_extra_networks.setup_ui(extra_networks_ui, txt2img_gallery)
-            # log.debug(f'UI interface: tab=txt2img batch={show_batch.value} seed={show_seed.value} advanced={show_advanced.value} second_pass={show_second_pass.value}')
 
     timer.startup.record("ui-txt2img")
 
@@ -579,19 +577,19 @@ def create_ui(startup_timer = None):
                 with gr.Tabs(elem_id="mode_img2img"):
                     img2img_selected_tab = gr.State(0) # pylint: disable=abstract-class-instantiated
                     with gr.TabItem('Image', id='img2img', elem_id="img2img_img2img_tab") as tab_img2img:
-                        init_img = gr.Image(label="Image for img2img", elem_id="img2img_image", show_label=False, source="upload", interactive=True, type="pil", tool="editor", image_mode="RGBA", height=480)
+                        init_img = gr.Image(label="Image for img2img", elem_id="img2img_image", show_label=False, source="upload", interactive=True, type="pil", tool="editor", image_mode="RGBA", height=512)
                         add_copy_image_controls('img2img', init_img)
 
                     with gr.TabItem('Sketch', id='img2img_sketch', elem_id="img2img_img2img_sketch_tab") as tab_sketch:
-                        sketch = gr.Image(label="Image for img2img", elem_id="img2img_sketch", show_label=False, source="upload", interactive=True, type="pil", tool="color-sketch", image_mode="RGBA", height=480)
+                        sketch = gr.Image(label="Image for img2img", elem_id="img2img_sketch", show_label=False, source="upload", interactive=True, type="pil", tool="color-sketch", image_mode="RGBA", height=512)
                         add_copy_image_controls('sketch', sketch)
 
                     with gr.TabItem('Inpaint', id='inpaint', elem_id="img2img_inpaint_tab") as tab_inpaint:
-                        init_img_with_mask = gr.Image(label="Image for inpainting with mask", show_label=False, elem_id="img2maskimg", source="upload", interactive=True, type="pil", tool="sketch", image_mode="RGBA", height=480)
+                        init_img_with_mask = gr.Image(label="Image for inpainting with mask", show_label=False, elem_id="img2maskimg", source="upload", interactive=True, type="pil", tool="sketch", image_mode="RGBA", height=512)
                         add_copy_image_controls('inpaint', init_img_with_mask)
 
                     with gr.TabItem('Inpaint sketch', id='inpaint_sketch', elem_id="img2img_inpaint_sketch_tab") as tab_inpaint_color:
-                        inpaint_color_sketch = gr.Image(label="Color sketch inpainting", show_label=False, elem_id="inpaint_sketch", source="upload", interactive=True, type="pil", tool="color-sketch", image_mode="RGBA", height=480)
+                        inpaint_color_sketch = gr.Image(label="Color sketch inpainting", show_label=False, elem_id="inpaint_sketch", source="upload", interactive=True, type="pil", tool="color-sketch", image_mode="RGBA", height=512)
                         inpaint_color_sketch_orig = gr.State(None) # pylint: disable=abstract-class-instantiated
                         add_copy_image_controls('inpaint_sketch', inpaint_color_sketch)
 
@@ -674,9 +672,6 @@ def create_ui(startup_timer = None):
                                     scale_by.release(**on_change_args)
                                     button_update_resize_to.click(**on_change_args)
 
-                                    # the code below is meant to update the resolution label after the image in the image selection UI has changed.
-                                    # as it is now the event keeps firing continuously for inpaint edits, which ruins the page with constant requests.
-                                    # I assume this must be a gradio bug and for now we'll just do it for non-inpaint inputs.
                                     for component in [init_img, sketch]:
                                         component.change(fn=lambda: None, _js="updateImg2imgResizeToTextAfterChangingImage", inputs=[], outputs=[], show_progress=False)
 
@@ -946,8 +941,8 @@ def create_ui(startup_timer = None):
         def get_opt_values():
             return [getattr(opts, _key) for _key in keys_to_reset]
 
-        elements_to_reset = [component_dict[_key] for _key in keys_to_reset]
-        indicator = gr.Button("", elem_classes="modification-indicator", elem_id="modification_indicator_" + key, **kwargs)
+        elements_to_reset = [component_dict[_key] for _key in keys_to_reset if component_dict[_key] is not None]
+        indicator = gr.Button("", elem_classes="modification-indicator", elem_id=f"modification_indicator_{key}", **kwargs)
         indicator.click(fn=get_opt_values, outputs=elements_to_reset, show_progress=False)
         return indicator
 
@@ -964,7 +959,7 @@ def create_ui(startup_timer = None):
         for key, value, comp in zip(opts.data_labels.keys(), args, components):
             if comp == dummy_component:
                 continue
-            elif not opts.same_type(value, opts.data_labels[key].default):
+            if not opts.same_type(value, opts.data_labels[key].default):
                 log.error(f'Setting bad value: {key}={value} expecting={type(opts.data_labels[key].default).__name__}')
                 continue
             if opts.set(key, value):
@@ -1135,6 +1130,7 @@ def create_ui(startup_timer = None):
             gr.Audio(interactive=False, value=os.path.join(script_path, opts.notification_audio_path), elem_id="audio_notification", visible=False)
 
         text_settings = gr.Textbox(elem_id="settings_json", value=lambda: opts.dumpjson(), visible=False)
+        components = [c for c in components if c is not None]
         settings_submit.click(
             fn=wrap_gradio_call(run_settings, extra_outputs=[gr.update()]),
             inputs=components,
@@ -1185,7 +1181,7 @@ def create_ui(startup_timer = None):
         demo.load(
             fn=get_settings_values,
             inputs=[],
-            outputs=[component_dict[k] for k in component_keys],
+            outputs=[component_dict[k] for k in component_keys if component_dict[k] is not None],
             queue=False,
         )
 

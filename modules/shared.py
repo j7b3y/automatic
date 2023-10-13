@@ -95,7 +95,7 @@ class State:
     textinfo = None
     time_start = None
     need_restart = False
-    server_start = None
+    server_start = time.time()
     oom = False
 
     def skip(self):
@@ -188,7 +188,6 @@ class State:
 
 
 state = State()
-state.server_start = time.time()
 if not hasattr(cmd_opts, "use_openvino"):
     cmd_opts.use_openvino = False
 if cmd_opts.use_openvino:
@@ -386,7 +385,7 @@ else: # cuda
 
 
 options_templates.update(options_section(('sd', "Execution & Models"), {
-    "sd_backend": OptionInfo("diffusers" if cmd_opts.use_openvino else "original", "Execution backend", gr.Radio, lambda: {"choices": ["original", "diffusers"] }),
+    "sd_backend": OptionInfo("diffusers" if cmd_opts.use_openvino else "original", "Execution backend", gr.Radio, {"choices": ["original", "diffusers"] }),
     "sd_checkpoint_autoload": OptionInfo(True, "Model autoload on server start"),
     "sd_model_checkpoint": OptionInfo(default_checkpoint, "Base model", gr.Dropdown, lambda: {"choices": list_checkpoint_tiles()}, refresh=refresh_checkpoints),
     "sd_model_refiner": OptionInfo('None', "Refiner model", gr.Dropdown, lambda: {"choices": ['None'] + list_checkpoint_tiles()}, refresh=refresh_checkpoints),
@@ -394,7 +393,7 @@ options_templates.update(options_section(('sd', "Execution & Models"), {
     "sd_model_dict": OptionInfo('None', "Use baseline data from a different model", gr.Dropdown, lambda: {"choices": ['None'] + list_checkpoint_tiles()}, refresh=refresh_checkpoints),
     "stream_load": OptionInfo(False, "Load models using stream loading method"),
     "model_reuse_dict": OptionInfo(False, "When loading models attempt to reuse previous model dictionary", gr.Checkbox, {"visible": False}),
-    "prompt_attention": OptionInfo("Full parser", "Prompt attention parser", gr.Radio, lambda: {"choices": ["Full parser", "Compel parser", "A1111 parser", "Fixed attention"] }),
+    "prompt_attention": OptionInfo("Full parser", "Prompt attention parser", gr.Radio, {"choices": ["Full parser", "Compel parser", "A1111 parser", "Fixed attention"] }),
     "prompt_mean_norm": OptionInfo(True, "Prompt attention mean normalization"),
     "comma_padding_backtrack": OptionInfo(20, "Prompt padding for long prompts", gr.Slider, {"minimum": 0, "maximum": 74, "step": 1 }),
     "sd_checkpoint_cache": OptionInfo(0, "Number of cached models", gr.Slider, {"minimum": 0, "maximum": 10, "step": 1}),
@@ -404,8 +403,8 @@ options_templates.update(options_section(('sd', "Execution & Models"), {
 
 options_templates.update(options_section(('cuda', "Compute Settings"), {
     "math_sep": OptionInfo("<h2>Execution precision</h2>", "", gr.HTML),
-    "precision": OptionInfo("Autocast", "Precision type", gr.Radio, lambda: {"choices": ["Autocast", "Full"]}),
-    "cuda_dtype": OptionInfo("FP32" if sys.platform == "darwin" or cmd_opts.use_openvino else "BF16" if devices.backend == "ipex" else "FP16", "Device precision type", gr.Radio, lambda: {"choices": ["FP32", "FP16", "BF16"]}),
+    "precision": OptionInfo("Autocast", "Precision type", gr.Radio, {"choices": ["Autocast", "Full"]}),
+    "cuda_dtype": OptionInfo("FP32" if sys.platform == "darwin" or cmd_opts.use_openvino else "BF16" if devices.backend == "ipex" else "FP16", "Device precision type", gr.Radio, {"choices": ["FP32", "FP16", "BF16"]}),
     "no_half": OptionInfo(False, "Use full precision for model (--no-half)", None, None, None),
     "no_half_vae": OptionInfo(False, "Use full precision for VAE (--no-half-vae)"),
     "upcast_sampling": OptionInfo(True if sys.platform == "darwin" else False, "Enable upcast sampling"),
@@ -416,7 +415,7 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
 
     "cross_attention_sep": OptionInfo("<h2>Cross-attention</h2>", "", gr.HTML),
     "cross_attention_optimization": OptionInfo(cross_attention_optimization_default, "Cross-attention optimization method", gr.Radio, lambda: {"choices": shared_items.list_crossattention() }),
-    "cross_attention_options": OptionInfo([], "Cross-attention advanced options", gr.CheckboxGroup, lambda: {"choices": ['xFormers enable flash Attention', 'SDP disable memory attention']}),
+    "cross_attention_options": OptionInfo([], "Cross-attention advanced options", gr.CheckboxGroup, {"choices": ['xFormers enable flash Attention', 'SDP disable memory attention']}),
     "sub_quad_sep": OptionInfo("<h3>Sub-quadratic options</h3>", "", gr.HTML),
     "sub_quad_q_chunk_size": OptionInfo(512, "cross-attention query chunk size", gr.Slider, {"minimum": 16, "maximum": 8192, "step": 8}),
     "sub_quad_kv_chunk_size": OptionInfo(512, "cross-attention kv chunk size", gr.Slider, {"minimum": 0, "maximum": 8192, "step": 8}),
@@ -429,8 +428,8 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
 
     "cuda_compile_sep": OptionInfo("<h2>Model Compile</h2>", "", gr.HTML),
     "cuda_compile": OptionInfo(True if cmd_opts.use_openvino else False, "Enable model compile"),
-    "cuda_compile_backend": OptionInfo("openvino_fx" if cmd_opts.use_openvino else "none", "Model compile backend", gr.Radio, lambda: {"choices": ['none', 'inductor', 'cudagraphs', 'aot_ts_nvfuser', 'hidet', 'ipex', 'openvino_fx']}),
-    "cuda_compile_mode": OptionInfo("default", "Model compile mode", gr.Radio, lambda: {"choices": ['default', 'reduce-overhead', 'max-autotune']}),
+    "cuda_compile_backend": OptionInfo("openvino_fx" if cmd_opts.use_openvino else "none", "Model compile backend", gr.Radio, {"choices": ['none', 'inductor', 'cudagraphs', 'aot_ts_nvfuser', 'hidet', 'ipex', 'openvino_fx']}),
+    "cuda_compile_mode": OptionInfo("default", "Model compile mode", gr.Radio, {"choices": ['default', 'reduce-overhead', 'max-autotune']}),
     "cuda_compile_fullgraph": OptionInfo(False, "Model compile fullgraph"),
     "cuda_compile_precompile": OptionInfo(False, "Model compile precompile"),
     "cuda_compile_verbose": OptionInfo(False, "Model compile verbose mode"),
@@ -438,7 +437,7 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
 
     "ipex_sep": OptionInfo("<h2>IPEX, DirectML and OpenVINO</h2>", "", gr.HTML),
     "ipex_optimize": OptionInfo(True if devices.backend == "ipex" else False, "Enable IPEX Optimize for Intel GPUs"),
-    "directml_memory_provider": OptionInfo(default_memory_provider, 'DirectML memory stats provider', gr.Radio, lambda: {"choices": memory_providers}),
+    "directml_memory_provider": OptionInfo(default_memory_provider, 'DirectML memory stats provider', gr.Radio, {"choices": memory_providers}),
     "openvino_disable_model_caching": OptionInfo(False, "OpenVINO disable model caching"),
     "openvino_multi_gpu": OptionInfo(False, "OpenVINO use Multi GPU"),
     "openvino_remove_igpu_from_multi": OptionInfo(False, "OpenVINO remove iGPU from Multi GPU"),
@@ -465,7 +464,7 @@ options_templates.update(options_section(('advanced', "Inference Settings"), {
 
     "inference_other_sep": OptionInfo("<h2>Other</h2>", "", gr.HTML),
     "batch_frame_mode": OptionInfo(False, "Process multiple images in batch in parallel"),
-    "inference_mode": OptionInfo("no-grad", "Torch inference mode", gr.Radio, lambda: {"choices": ["no-grad", "inference-mode", "none"]}),
+    "inference_mode": OptionInfo("no-grad", "Torch inference mode", gr.Radio, {"choices": ["no-grad", "inference-mode", "none"]}),
     "sd_vae_sliced_encode": OptionInfo(False, "VAE Slicing (original)"),
 }))
 
@@ -475,20 +474,20 @@ options_templates.update(options_section(('diffusers', "Diffusers Settings"), {
     "diffusers_move_unet": OptionInfo(True, "Move base model to CPU when using VAE"),
     "diffusers_move_refiner": OptionInfo(True, "Move refiner model to CPU when not in use"),
     "diffusers_extract_ema": OptionInfo(True, "Use model EMA weights when possible"),
-    "diffusers_generator_device": OptionInfo("default", "Generator device", gr.Radio, lambda: {"choices": ["default", "cpu"]}),
+    "diffusers_generator_device": OptionInfo("default", "Generator device", gr.Radio, {"choices": ["default", "cpu"]}),
     "diffusers_model_cpu_offload": OptionInfo(False, "Enable model CPU offload (--medvram)"),
     "diffusers_seq_cpu_offload": OptionInfo(False, "Enable sequential CPU offload (--lowvram)"),
-    "diffusers_vae_upcast": OptionInfo("default", "VAE upcasting", gr.Radio, lambda: {"choices": ['default', 'true', 'false']}),
+    "diffusers_vae_upcast": OptionInfo("default", "VAE upcasting", gr.Radio, {"choices": ['default', 'true', 'false']}),
     "diffusers_vae_slicing": OptionInfo(True, "Enable VAE slicing"),
     "diffusers_vae_tiling": OptionInfo(False if cmd_opts.use_openvino else True, "Enable VAE tiling"),
     "diffusers_attention_slicing": OptionInfo(False, "Enable attention slicing"),
-    "diffusers_model_load_variant": OptionInfo("default", "Diffusers model loading variant", gr.Radio, lambda: {"choices": ['default', 'fp32', 'fp16']}),
-    "diffusers_vae_load_variant": OptionInfo("default", "Diffusers VAE loading variant", gr.Radio, lambda: {"choices": ['default', 'fp32', 'fp16']}),
-    "diffusers_lora_loader": OptionInfo("diffusers" if cmd_opts.use_openvino else "sequential apply", "Diffusers LoRA loading variant", gr.Radio, lambda: {"choices": ['diffusers', 'sequential apply', 'merge and apply']}),
+    "diffusers_model_load_variant": OptionInfo("default", "Diffusers model loading variant", gr.Radio, {"choices": ['default', 'fp32', 'fp16']}),
+    "diffusers_vae_load_variant": OptionInfo("default", "Diffusers VAE loading variant", gr.Radio, {"choices": ['default', 'fp32', 'fp16']}),
+    "diffusers_lora_loader": OptionInfo("diffusers" if cmd_opts.use_openvino else "sequential apply", "Diffusers LoRA loading variant", gr.Radio, {"choices": ['diffusers', 'sequential apply', 'merge and apply']}),
     "diffusers_force_zeros": OptionInfo(True, "Force zeros for prompts when empty"),
     "diffusers_aesthetics_score": OptionInfo(False, "Require aesthetics score"),
     "diffusers_force_inpaint": OptionInfo(False, 'Diffusers force inpaint pipeline'),
-    "diffusers_pooled": OptionInfo("default", "Diffusers SDXL pooled embeds (experimental)", gr.Radio, lambda: {"choices": ['default', 'weighted']}),
+    "diffusers_pooled": OptionInfo("default", "Diffusers SDXL pooled embeds (experimental)", gr.Radio, {"choices": ['default', 'weighted']}),
 }))
 
 options_templates.update(options_section(('system-paths', "System Paths"), {
@@ -497,7 +496,7 @@ options_templates.update(options_section(('system-paths', "System Paths"), {
     "ckpt_dir": OptionInfo(os.path.join(paths.models_path, 'Stable-diffusion'), "Folder with stable diffusion models", folder=True),
     "diffusers_dir": OptionInfo(os.path.join(paths.models_path, 'Diffusers'), "Folder with Hugggingface models", folder=True),
     "vae_dir": OptionInfo(os.path.join(paths.models_path, 'VAE'), "Folder with VAE files", folder=True),
-    "sd_lora": OptionInfo("", "Add LoRA to prompt", gr.Textbox, {"visible": False}),
+    # "sd_lora": OptionInfo("", "Add LoRA to prompt", gr.Textbox, {"visible": False}),
     "lora_dir": OptionInfo(os.path.join(paths.models_path, 'Lora'), "Folder with LoRA network(s)", folder=True),
     "lyco_dir": OptionInfo(os.path.join(paths.models_path, 'LyCORIS'), "Folder with LyCORIS network(s)", folder=True),
     "styles_dir": OptionInfo(os.path.join(paths.data_path, 'styles.csv'), "File or Folder with user-defined styles", folder=True),
@@ -516,7 +515,7 @@ options_templates.update(options_section(('system-paths', "System Paths"), {
 
 options_templates.update(options_section(('saving-images', "Image Options"), {
     "samples_save": OptionInfo(True, "Always save all generated images"),
-    "samples_format": OptionInfo('jpg', 'File format for generated images', gr.Dropdown, lambda: {"choices": ["jpg", "png", "webp", "tiff", "jp2"]}),
+    "samples_format": OptionInfo('jpg', 'File format for generated images', gr.Dropdown, {"choices": ["jpg", "png", "webp", "tiff", "jp2"]}),
     "jpeg_quality": OptionInfo(90, "Quality for saved jpeg images", gr.Slider, {"minimum": 1, "maximum": 100, "step": 1}),
     "img_max_size_mp": OptionInfo(250, "Maximum image size (MP)", gr.Slider, {"minimum": 100, "maximum": 2000, "step": 1}),
     "webp_lossless": OptionInfo(False, "Use lossless compression for webp images"),
@@ -531,7 +530,7 @@ options_templates.update(options_section(('saving-images', "Image Options"), {
     "image_watermark": OptionInfo('', "Image watermark string"),
     "image_sep_grid": OptionInfo("<h2>Grid Options</h2>", "", gr.HTML),
     "grid_save": OptionInfo(True, "Always save all generated image grids"),
-    "grid_format": OptionInfo('jpg', 'File format for grids', gr.Dropdown, lambda: {"choices": ["jpg", "png", "webp", "tiff", "jp2"]}),
+    "grid_format": OptionInfo('jpg', 'File format for grids', gr.Dropdown, {"choices": ["jpg", "png", "webp", "tiff", "jp2"]}),
     "n_rows": OptionInfo(-1, "Grid row count", gr.Slider, {"minimum": -1, "maximum": 16, "step": 1}),
 
     "save_sep_options": OptionInfo("<h2>Intermediate Image Saving</h2>", "", gr.HTML),
@@ -553,7 +552,7 @@ options_templates.update(options_section(('saving-paths', "Image Naming & Paths"
 
     "outdir_sep_dirs": OptionInfo("<h2>Directories</h2>", "", gr.HTML),
     "save_to_dirs": OptionInfo(False, "Save images to a subdirectory"),
-    "use_save_to_dirs_for_ui": OptionInfo(False, "Save images to a subdirectory when using Save button"),
+    "use_save_to_dirs_for_ui": OptionInfo(False, "Save images to a subdirectory when using Save button", gr.Checkbox, {"visible": False}),
     "directories_filename_pattern": OptionInfo("[date]", "Directory name pattern", component_args=hide_dirs),
     "directories_max_prompt_words": OptionInfo(8, "Max prompt words for [prompt_words] pattern", gr.Slider, {"minimum": 1, "maximum": 99, "step": 1, **hide_dirs}),
     "outdir_samples": OptionInfo("", "Output directory for images", component_args=hide_dirs, folder=True),
@@ -564,14 +563,15 @@ options_templates.update(options_section(('saving-paths', "Image Naming & Paths"
     "outdir_init_images": OptionInfo("outputs/init-images", "Directory for saving init images when using img2img", component_args=hide_dirs, folder=True),
 
     "outdir_sep_grids": OptionInfo("<h2>Grids</h2>", "", gr.HTML),
-    "grid_extended_filename": OptionInfo(True, "Add extended info (seed, prompt) to filename when saving grid"),
-    "grid_save_to_dirs": OptionInfo(False, "Save grids to a subdirectory"),
+    "grid_extended_filename": OptionInfo(True, "Add extended info (seed, prompt) to filename when saving grid", gr.Checkbox, {"visible": False}),
+    "grid_save_to_dirs": OptionInfo(False, "Save grids to a subdirectory", gr.Checkbox, {"visible": False}),
     "outdir_grids": OptionInfo("", "Output directory for grids", component_args=hide_dirs, folder=True),
     "outdir_txt2img_grids": OptionInfo("outputs/grids", 'Output directory for txt2img grids', component_args=hide_dirs, folder=True),
     "outdir_img2img_grids": OptionInfo("outputs/grids", 'Output directory for img2img grids', component_args=hide_dirs, folder=True),
 }))
 
 options_templates.update(options_section(('ui', "User Interface"), {
+    "motd": OptionInfo(True, "Show MOTD"),
     "gradio_theme": OptionInfo("black-teal", "UI theme", gr.Dropdown, lambda: {"choices": list_themes()}, refresh=refresh_themes),
     "theme_style": OptionInfo("Auto", "Theme mode", gr.Radio, {"choices": ["Auto", "Dark", "Light"]}),
     "tooltips": OptionInfo("UI Tooltips", "UI tooltips", gr.Radio, {"choices": ["None", "Browser default", "UI tooltips"], "visible": False}),
@@ -617,12 +617,12 @@ options_templates.update(options_section(('sampler-params', "Sampler Settings"),
     "schedulers_use_karras": OptionInfo(True, "Use Karras sigmas", gr.Checkbox, {"visible": False}),
     "schedulers_use_thresholding": OptionInfo(False, "Use dynamic thresholding", gr.Checkbox, {"visible": False}),
     "schedulers_use_loworder": OptionInfo(True, "Use simplified solvers in final steps", gr.Checkbox, {"visible": False}),
-    "schedulers_prediction_type": OptionInfo("default", "Override model prediction type", gr.Radio, lambda: {"choices": ['default', 'epsilon', 'sample', 'v-prediction'], "visible": False}),
+    "schedulers_prediction_type": OptionInfo("default", "Override model prediction type", gr.Radio, {"choices": ['default', 'epsilon', 'sample', 'v-prediction'], "visible": False}),
 
     # managed from ui.py for backend diffusers
     "schedulers_sep_diffusers": OptionInfo("<h2>Diffusers specific config</h2>", "", gr.HTML),
-    "schedulers_dpm_solver": OptionInfo("sde-dpmsolver++", "DPM solver algorithm", gr.Radio, lambda: {"choices": ['dpmsolver', 'dpmsolver++', 'sde-dpmsolver', 'sde-dpmsolver++']}),
-    "schedulers_beta_schedule": OptionInfo("default", "Beta schedule", gr.Radio, lambda: {"choices": ['default', 'linear', 'scaled_linear', 'squaredcos_cap_v2']}),
+    "schedulers_dpm_solver": OptionInfo("sde-dpmsolver++", "DPM solver algorithm", gr.Radio, {"choices": ['dpmsolver', 'dpmsolver++', 'sde-dpmsolver', 'sde-dpmsolver++']}),
+    "schedulers_beta_schedule": OptionInfo("default", "Beta schedule", gr.Radio, {"choices": ['default', 'linear', 'scaled_linear', 'squaredcos_cap_v2']}),
     'schedulers_beta_start': OptionInfo(0, "Beta start", gr.Slider, {"minimum": 0, "maximum": 1, "step": 0.00001}),
     'schedulers_beta_end': OptionInfo(0, "Beta end", gr.Slider, {"minimum": 0, "maximum": 1, "step": 0.00001}),
 
@@ -640,6 +640,8 @@ options_templates.update(options_section(('sampler-params', "Sampler Settings"),
     'uni_pc_variant': OptionInfo("bh1", "UniPC variant", gr.Radio, {"choices": ["bh1", "bh2", "vary_coeff"]}),
     'uni_pc_skip_type': OptionInfo("time_uniform", "UniPC skip type", gr.Radio, {"choices": ["time_uniform", "time_quadratic", "logSNR"]}),
     "ddim_discretize": OptionInfo('uniform', "DDIM discretize img2img", gr.Radio, {"choices": ['uniform', 'quad']}),
+    "pad_cond_uncond": OptionInfo(True, "Pad prompt and negative prompt to be same length", gr.Checkbox, {"visible": False}), # TODO implementation missing
+    "batch_cond_uncond": OptionInfo(True, "Do conditional and unconditional denoising in one batch", gr.Checkbox, {"visible": False}), # TODO implementation missing
 }))
 
 options_templates.update(options_section(('postprocessing', "Postprocessing"), {
@@ -699,12 +701,12 @@ options_templates.update(options_section(('interrogate', "Interrogate"), {
 options_templates.update(options_section(('extra_networks', "Extra Networks"), {
     "extra_networks_sep1": OptionInfo("<h2>Extra networks UI</h2>", "", gr.HTML),
     "extra_networks": OptionInfo(["All"], "Extra networks", ui_components.DropdownMulti, lambda: {"choices": ['All'] + [en.title for en in extra_networks]}),
-    "extra_networks_card_cover": OptionInfo("sidebar", "UI position", gr.Radio, lambda: {"choices": ["cover", "inline", "sidebar"]}),
+    "extra_networks_card_cover": OptionInfo("sidebar", "UI position", gr.Radio, {"choices": ["cover", "inline", "sidebar"]}),
     "extra_networks_height": OptionInfo(53, "UI height (%)", gr.Slider, {"minimum": 10, "maximum": 100, "step": 1}),
     "extra_networks_sidebar_width": OptionInfo(35, "UI sidebar width (%)", gr.Slider, {"minimum": 10, "maximum": 80, "step": 1}),
     "extra_networks_card_size": OptionInfo(160, "UI card size (px)", gr.Slider, {"minimum": 20, "maximum": 2000, "step": 1}),
     "extra_networks_card_square": OptionInfo(True, "UI disable variable aspect ratio"),
-    "extra_networks_card_fit": OptionInfo("cover", "UI image contain method", gr.Radio, lambda: {"choices": ["contain", "cover", "fill"], "visible": False}),
+    "extra_networks_card_fit": OptionInfo("cover", "UI image contain method", gr.Radio, {"choices": ["contain", "cover", "fill"], "visible": False}),
 
     "extra_networks_sep2": OptionInfo("<h2>Extra networks general</h2>", "", gr.HTML),
     "extra_network_skip_indexing": OptionInfo(False, "Do not automatically build extra network pages", gr.Checkbox),
@@ -718,7 +720,7 @@ options_templates.update(options_section(('extra_networks', "Extra Networks"), {
     "lyco_patch_lora": OptionInfo(False, "Use LyCoris handler for all LoRA types", gr.Checkbox, { "visible": False }),
     "lora_functional": OptionInfo(False, "Use Kohya method for handling multiple LoRA", gr.Checkbox, { "visible": False }),
 
-    "sd_hypernetwork": OptionInfo("None", "Add hypernetwork to prompt", gr.Dropdown, lambda: { "choices": ["None"] + list(hypernetworks.keys()), "visible": False }, refresh=reload_hypernetworks),
+    "sd_hypernetwork": OptionInfo("None", "Add hypernetwork to prompt", gr.Dropdown, { "choices": ["None"], "visible": False }),
 }))
 
 options_templates.update(options_section((None, "Hidden options"), {
@@ -733,6 +735,7 @@ options_templates.update()
 class Options:
     data = None
     data_labels = options_templates
+    filename = None
     typemap = {int: float}
 
     def __init__(self):
@@ -784,7 +787,9 @@ class Options:
         data_label = self.data_labels.get(key)
         return data_label.default if data_label is not None else None
 
-    def save(self, filename):
+    def save(self, filename=None, silent=False):
+        if filename is None:
+            filename = self.filename
         if cmd_opts.freeze:
             log.warning(f'Settings saving is disabled: {filename}')
             return
@@ -802,7 +807,7 @@ class Options:
                     if k not in compatibility_opts:
                         unused_settings.append(k)
                     diff[k] = v
-            writefile(diff, filename)
+            writefile(diff, filename, silent=silent)
             if len(unused_settings) > 0:
                 log.debug(f"Unused settings: {unused_settings}")
         except Exception as e:
@@ -815,7 +820,9 @@ class Options:
         type_y = self.typemap.get(type(y), type(y))
         return type_x == type_y
 
-    def load(self, filename):
+    def load(self, filename=None):
+        if filename is None:
+            filename = self.filename
         if not os.path.isfile(filename):
             log.debug(f'Created default config: {filename}')
             self.save(filename)
@@ -843,7 +850,7 @@ class Options:
         d = {k: self.data.get(k, self.data_labels.get(k).default) for k in self.data_labels.keys()}
         metadata = {
             k: {
-                "is_stored": k in self.data and self.data[k] != self.data_labels[k].default,
+                "is_stored": k in self.data and self.data[k] != self.data_labels[k].default, # pylint: disable=unnecessary-dict-index-lookup
                 "tab_name": v.section[0]
             } for k, v in self.data_labels.items()
         }
@@ -924,7 +931,7 @@ def reload_gradio_theme(theme_name=None):
             'font_mono':['IBM Plex Mono', 'ui-monospace', 'Consolas', 'monospace']
         }
     if theme_name in list_builtin_themes():
-        gradio_theme = gr.themes.Default(**default_font_params)
+        gradio_theme = gr.themes.Base(**default_font_params)
     elif theme_name.startswith("gradio/"):
         if theme_name == "gradio/default":
             gradio_theme = gr.themes.Default(**default_font_params)

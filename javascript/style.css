@@ -77,7 +77,7 @@ button.custom-button{ border-radius: var(--button-large-radius); padding: var(--
 #txt2img_generate_line2 > button, #img2img_generate_line2 > button, #extras_generate_box > button, #txt2img_tools > button, #img2img_tools > button { height: 2em; line-height: 0; font-size: var(--input-text-size);
   min-width: unset; display: block !important; margin-left: 0.4em; margin-right: 0.4em; }
 #txt2img_prompt, #txt2img_neg_prompt, #img2img_prompt, #img2img_neg_prompt { display: contents; }
-.interrogate-col{ min-width: 0 !important; max-width: fit-content; gap: 0.5em; }
+.interrogate-col{ min-width: 0 !important; max-width: fit-content; margin-right: var(--spacing-xxl); }
 .interrogate-col > button{ flex: 1; }
 #sampler_selection_img2img { margin-top: 1em; }
 #txtimg_hr_finalres{ min-height: 0 !important; }
@@ -155,10 +155,10 @@ table.settings-value-table td { padding: 0.4em; border: 1px solid #ccc; max-widt
 #imageARPreview { position: absolute; top: 0px; left: 0px; border: 2px solid red; background: rgba(255, 0, 0, 0.3); z-index: 900; pointer-events: none; display: none; }
 
 /* context menu (ie for the generate button) */
-#context-menu { z-index:9999; position:absolute; display:block; padding:0px 0; border:2px solid #a55000; box-shadow:1px 1px 2px #CE6400; width: 200px; }
-.context-menu-items{ list-style: none; margin: 0; padding: 0; }
-.context-menu-items a { display:block; padding:5px; cursor:pointer; }
-.context-menu-items a:hover { background: #a55000; }
+#context-menu { z-index: 9999; position: absolute; display: block; padding: var(--spacing-md); border: 2px solid var(--highlight-color); background: var(--background-fill-primary); color: var(--body-text-color); }
+.context-menu-items { list-style: none; margin: 0; padding: 0; }
+.context-menu-items a { display: block; padding: var(--spacing-md); cursor: pointer; font-weight: normal; }
+.context-menu-items a:hover { background: var(--highlight-color) }
 
 /* extensions */
 #tab_extensions table, #tab_config table{ border-collapse: collapse; }
@@ -181,6 +181,7 @@ table.settings-value-table td { padding: 0.4em; border: 1px solid #ccc; max-widt
 .extra-networks .description { flex: 3; }
 .extra-networks .tab-nav > button { margin-right: 0; height: 24px; padding: 2px 4px 2px 4px; }
 .extra-networks .buttons { position: absolute; right: 0; margin: -4px; background: var(--background-color); }
+.extra-networks .buttons>button { height: 1.2em; margin-top: var(--spacing-md); }
 .extra-networks .custom-button { width: 120px; width: 100%; background: none; justify-content: left; text-align: left; padding: 2px 8px 2px 16px; text-indent: -8px; box-shadow: none; line-break: auto; }
 .extra-networks .custom-button:hover { background: var(--button-primary-background-fill) }
 .extra-networks-tab { padding: 0 !important; }
@@ -248,11 +249,12 @@ div.controlnet_main_options { display: grid; grid-template-columns: 1fr 1fr; gri
 
 /* custom component */
 .folder-selector textarea { height: 2em !important; padding: 6px !important; }
-.nvml { position: fixed; top: 100px; left: 100px; background: var(--background-fill-primary); border: 1px solid var(--button-primary-border-color); padding: 6px; color: var(--button-primary-text-color);
+.nvml { position: fixed; bottom: 10px; right: 10px; background: var(--background-fill-primary); border: 1px solid var(--button-primary-border-color); padding: 6px; color: var(--button-primary-text-color);
   font-size: 0.7em; z-index: 50; font-family: monospace; display: none; }
 
 /* loader */
 .splash { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1000; display: block; text-align: center; }
+.motd { margin-top: 2em; color: var(--body-text-color-subdued); font-family: monospace; font-variant: all-petite-caps; }
 .splash-img { margin: 10% auto 0 auto; width: 512px; background-repeat: no-repeat; height: 512px; animation: color 10s infinite alternate; }
 .loading { color: white; position: absolute; top: 20%; left: 50%; transform: translateX(-50%); }
 .loader { width: 300px; height: 300px; border: var(--spacing-md) solid transparent; border-radius: 50%; border-top: var(--spacing-md) solid var(--primary-600); animation: spin 4s linear infinite; position: relative; }

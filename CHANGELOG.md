@@ -1,9 +1,8 @@
 # Change Log for SD.Next
 
-## Update for 2023-10-08
+## Update for 2023-10-11
 
-- Final strech of the DEV branch before merge to master  
-- Requires pending `diffusers==0.22.0`
+- Final strech of the DEV branch before merge to master: requires pending `diffusers==0.22.0`
 
 This is a major release, with many changes and new functionality...  
 
@@ -19,7 +18,7 @@ or even free speedups and quality improvements (regardless of which workflows yo
   - converted submenus from checkboxes to accordion elements  
     any ui state including state of open/closed menus can be saved as default!  
     see *System -> User interface -> Set menu states*  
-  - new built-in theme **invokeai**  
+  - new built-in theme **invoked**  
     thanks @BinaryQuantumSoul  
   - add **compact view** option in settings -> user interface  
   - small visual indicator bottom right of page showing internal server job state  
@@ -90,6 +89,8 @@ or even free speedups and quality improvements (regardless of which workflows yo
     thanks @AI-Casanova  
   - better **Lora** handling  
     thanks @AI-Casanova  
+  - better **SDXL preview** quality (approx method)  
+    thanks @BlueAmulet
   - new setting: *settings -> diffusers -> force inpaint*  
     as some models behave better when in *inpaint* mode even for normal *img2img* tasks  
 - **Upscalers**:
@@ -133,7 +134,7 @@ or even free speedups and quality improvements (regardless of which workflows yo
   - to enable search, make sure all models have set hash values  
     *Models -> Valida -> Calculate hashes*  
 - **LoRA**
-  - new unified LoRA handler for all LoRA types (lora, lyco, loha, lokr, locon, etc.)  
+  - new unified LoRA handler for all LoRA types (lora, lyco, loha, lokr, locon, ia3, etc.)  
     applies to both original and diffusers backend  
     thanks @AI-Casanova for diffusers port  
   - for *backend:original*, separate lyco handler has been removed  
@@ -141,6 +142,7 @@ or even free speedups and quality improvements (regardless of which workflows yo
   - **CUDA**:  
     - default updated to `torch` *2.1.0* with cuda *12.1*  
     - testing moved to `torch` *2.2.0-dev/cu122*  
+    - check out *generate context menu -> show nvml*
   - **Intel Arc/IPEX**:  
     - tons of optimizations, built-in binary wheels for Windows  
       i have to say, intel arc/ipex is getting to be quite a player, especially with openvino  
@@ -173,6 +175,10 @@ or even free speedups and quality improvements (regardless of which workflows yo
       new option *settings -> inference -> batch mode*  
       when using img2img process batch, process multiple images in batch in parallel  
       thanks @Symbiomatrix
+- **NSFW**
+  - install extension: [NudeNet](https://github.com/vladmandic/sd-extension-nudenet)  
+    body part detection, image metadata, advanced censoring, etc...  
+    more in the extension notes  
 - **General**  
   - **Startup**  
     - all main CLI parameters can now be set as environment variable as well  

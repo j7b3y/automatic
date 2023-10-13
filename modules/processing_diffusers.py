@@ -12,8 +12,10 @@ import modules.sd_models as sd_models
 import modules.sd_vae as sd_vae
 import modules.taesd.sd_vae_taesd as sd_vae_taesd
 import modules.images as images
+import modules.errors as errors
 from modules.processing import StableDiffusionProcessing
 import modules.prompt_parser_diffusers as prompt_parser_diffusers
+from modules.sd_hijack_hypertile import hypertile_set
 
 
 def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_prompts):
@@ -27,6 +29,9 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
         if p.init_images[0].width != tgt_width or p.init_images[0].height != tgt_height:
             shared.log.debug(f'Resizing init images: original={p.init_images[0].width}x{p.init_images[0].height} target={tgt_width}x{tgt_height}')
             p.init_images = [images.resize_image(1, image, tgt_width, tgt_height, upscaler_name=None) for image in p.init_images]
+            p.height = tgt_height
+            p.width = tgt_width
+            hypertile_set(p)
             if p.mask is not None:
                 p.mask = images.resize_image(1, p.mask, tgt_width, tgt_height, upscaler_name=None)
             if p.mask_for_overlay is not None:
@@ -256,6 +261,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
                 pass
                 # shared.log.debug(f'Diffuser not supported: pipeline={pipeline.__class__.__name__} task={sd_models.get_diffusers_task(model)} arg={arg}')
         # shared.log.debug(f'Diffuser pipeline: {pipeline.__class__.__name__} possible={possible}')
+        hypertile_set(p, hr=hasattr(p, 'init_images') and len(p.init_images) > 0)
         clean = args.copy()
         clean.pop('callback', None)
         clean.pop('callback_steps', None)
@@ -321,7 +327,6 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
 
     p.extra_generation_params['Pipeline'] = shared.sd_model.__class__.__name__
 
-    cross_attention_kwargs={}
     if len(getattr(p, 'init_images', [])) > 0:
         while len(p.init_images) < len(prompts):
             p.init_images.append(p.init_images[-1])
@@ -372,6 +377,8 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
     except ValueError as e:
         shared.state.interrupted = True
         shared.log.error(f'Processing: {e}')
+        if shared.cmd_opts.debug:
+            errors.display(e, 'Processing')
 
     if hasattr(shared.sd_model, 'embedding_db') and len(shared.sd_model.embedding_db.embeddings_used) > 0:
         p.extra_generation_params['Embeddings'] = ', '.join(shared.sd_model.embedding_db.embeddings_used)
@@ -449,7 +456,7 @@ def process_diffusers(p: StableDiffusionProcessing, seeds, prompts, negative_pro
             #    results.append(image)
             #    return results
             noise_level = round(350 * p.denoising_strength)
-            output_type='latent' if hasattr(shared.sd_refiner, 'vae') else 'np',
+            output_type='latent' if hasattr(shared.sd_refiner, 'vae') else 'np'
             if shared.sd_refiner.__class__.__name__ == 'StableDiffusionUpscalePipeline':
                 image = vae_decode(latents=image, model=shared.sd_model, full_quality=p.full_quality, output_type='pil')
                 p.extra_generation_params['Noise level'] = noise_level

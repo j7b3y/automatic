@@ -18,6 +18,7 @@ class Dot(dict): # dot notation access to dictionary attributes
     __delattr__ = dict.__delitem__
 
 
+version = None
 log = logging.getLogger("sd")
 log_file = os.path.join(os.path.dirname(__file__), 'sdnext.log')
 log_rolled = False
@@ -177,16 +178,16 @@ def installed(package, friendly: str = None):
                 spec = pkg_resources.working_set.by_key.get(p[0].replace('_', '-'), None) # check name variations
             ok = ok and spec is not None
             if ok:
-                version = pkg_resources.get_distribution(p[0]).version
-                # log.debug(f"Package version found: {p[0]} {version}")
+                package_version = pkg_resources.get_distribution(p[0]).version
+                # log.debug(f"Package version found: {p[0]} {package_version}")
                 if len(p) > 1:
-                    exact = version == p[1]
+                    exact = package_version == p[1]
                     ok = ok and (exact or args.experimental)
                     if not exact:
                         if args.experimental:
-                            log.warning(f"Package allowing experimental: {p[0]} {version} required {p[1]}")
+                            log.warning(f"Package allowing experimental: {p[0]} {package_version} required {p[1]}")
                         else:
-                            log.warning(f"Package wrong version: {p[0]} {version} required {p[1]}")
+                            log.warning(f"Package wrong version: {p[0]} {package_version} required {p[1]}")
             else:
                 log.debug(f"Package version not found: {p[0]}")
         return ok
@@ -361,7 +362,7 @@ def check_torch():
     elif allow_cuda and (shutil.which('nvidia-smi') is not None or os.path.exists(os.path.join(os.environ.get('SystemRoot') or r'C:\Windows', 'System32', 'nvidia-smi.exe'))):
         log.info('nVidia CUDA toolkit detected')
         torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision --index-url https://download.pytorch.org/whl/cu121')
-        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.22' if opts.get('cross_attention_optimization', '') == 'xFormers' else 'none')
+        xformers_package = os.environ.get('XFORMERS_PACKAGE', '--pre xformers<0.0.24' if opts.get('cross_attention_optimization', '') == 'xFormers' else 'none')
     elif allow_rocm and (shutil.which('rocminfo') is not None or os.path.exists('/opt/rocm/bin/rocminfo') or os.path.exists('/dev/kfd')):
         log.info('AMD ROCm toolkit detected')
         os.environ.setdefault('PYTORCH_HIP_ALLOC_CONF', 'garbage_collection_threshold:0.8,max_split_size_mb:512')
@@ -404,11 +405,14 @@ def check_torch():
         except Exception as e:
             log.debug(f'ROCm hipconfig failed: {e}')
             rocm_ver = None
-        if rocm_ver in ['5.5', '5.6', '5.7']:
+        if rocm_ver in {"5.7"}:
             # install torch nightly via torchvision to avoid wasting bandwidth when torchvision depends on torch from yesterday
-            torch_command = os.environ.get('TORCH_COMMAND', f'torchvision --pre --index-url https://download.pytorch.org/whl/nightly/rocm{rocm_ver}')
+            torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision --pre --index-url https://download.pytorch.org/whl/nightly/rocm{rocm_ver}')
+        elif rocm_ver in {"5.5", "5.6"}:
+            torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision --index-url https://download.pytorch.org/whl/nightly/rocm{rocm_ver}')
         else:
-            torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/rocm5.4.2')
+            # ROCm 5.5 is oldest for PyTorch 2.1
+            torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision --index-url https://download.pytorch.org/whl/rocm5.5')
         xformers_package = os.environ.get('XFORMERS_PACKAGE', 'none')
     elif allow_ipex and (args.use_ipex or shutil.which('sycl-ls') is not None or shutil.which('sycl-ls.exe') is not None or os.environ.get('ONEAPI_ROOT') is not None or os.path.exists('/opt/intel/oneapi') or os.path.exists("C:/Program Files (x86)/Intel/oneAPI") or os.path.exists("C:/oneAPI")):
         args.use_ipex = True # pylint: disable=attribute-defined-outside-init
@@ -430,7 +434,7 @@ def check_torch():
     else:
         machine = platform.machine()
         if sys.platform == 'darwin':
-            torch_command = os.environ.get('TORCH_COMMAND', 'torch==2.0.1 torchvision==0.15.2')
+            torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision')
         elif allow_directml and args.use_directml and ('arm' not in machine and 'aarch' not in machine):
             log.info('Using DirectML Backend')
             torch_command = os.environ.get('TORCH_COMMAND', 'torch-directml')
@@ -466,8 +470,8 @@ def check_torch():
                 try:
                     if args.use_directml and allow_directml:
                         import torch_directml # pylint: disable=import-error
-                        version = pkg_resources.get_distribution("torch-directml")
-                        log.info(f'Torch backend: DirectML ({version})')
+                        dml_ver = pkg_resources.get_distribution("torch-directml")
+                        log.info(f'Torch backend: DirectML ({dml_ver})')
                         for i in range(0, torch_directml.device_count()):
                             log.info(f'Torch detected GPU: {torch_directml.device_name(i)}')
                 except Exception:
@@ -560,24 +564,18 @@ def install_repositories():
     log.info('Verifying repositories')
     os.makedirs(os.path.join(os.path.dirname(__file__), 'repositories'), exist_ok=True)
     stable_diffusion_repo = os.environ.get('STABLE_DIFFUSION_REPO', "https://github.com/Stability-AI/stablediffusion.git")
-    # stable_diffusion_commit = os.environ.get('STABLE_DIFFUSION_COMMIT_HASH', "cf1d67a6fd5ea1aa600c4df58e5b47da45f6bdbf")
     stable_diffusion_commit = os.environ.get('STABLE_DIFFUSION_COMMIT_HASH', None)
     clone(stable_diffusion_repo, d('stable-diffusion-stability-ai'), stable_diffusion_commit)
     taming_transformers_repo = os.environ.get('TAMING_TRANSFORMERS_REPO', "https://github.com/CompVis/taming-transformers.git")
-    # taming_transformers_commit = os.environ.get('TAMING_TRANSFORMERS_COMMIT_HASH', "3ba01b241669f5ade541ce990f7650a3b8f65318")
     taming_transformers_commit = os.environ.get('TAMING_TRANSFORMERS_COMMIT_HASH', None)
     clone(taming_transformers_repo, d('taming-transformers'), taming_transformers_commit)
     k_diffusion_repo = os.environ.get('K_DIFFUSION_REPO', 'https://github.com/crowsonkb/k-diffusion.git')
-    # k_diffusion_commit = os.environ.get('K_DIFFUSION_COMMIT_HASH', "b43db16749d51055f813255eea2fdf1def801919")
-    # k_diffusion_commit = os.environ.get('K_DIFFUSION_COMMIT_HASH', 'ab527a9')
-    k_diffusion_commit = os.environ.get('K_DIFFUSION_COMMIT_HASH', 'f4a74f1ec906cb62916f58288ec73ef0330ba446')
+    k_diffusion_commit = os.environ.get('K_DIFFUSION_COMMIT_HASH', '0455157')
     clone(k_diffusion_repo, d('k-diffusion'), k_diffusion_commit)
     codeformer_repo = os.environ.get('CODEFORMER_REPO', 'https://github.com/sczhou/CodeFormer.git')
-    # codeformer_commit = os.environ.get('CODEFORMER_COMMIT_HASH', "c5b4593074ba6214284d6acd5f1719b6c5d739af")
     codeformer_commit = os.environ.get('CODEFORMER_COMMIT_HASH', "7a584fd")
     clone(codeformer_repo, d('CodeFormer'), codeformer_commit)
     blip_repo = os.environ.get('BLIP_REPO', 'https://github.com/salesforce/BLIP.git')
-    # blip_commit = os.environ.get('BLIP_COMMIT_HASH', "48211a1594f1321b00f14c9f7a5b4813144b2fb9")
     blip_commit = os.environ.get('BLIP_COMMIT_HASH', None)
     clone(blip_repo, d('BLIP'), blip_commit)
     if args.profile:
@@ -700,7 +698,7 @@ def ensure_base_requirements():
     except ImportError:
         install('setuptools', 'setuptools')
     try:
-        import setuptools # pylint: disable=unused-import
+        import setuptools # pylint: disable=unused-import # noqa: F811
     except ImportError:
         pass
     try:
@@ -708,7 +706,7 @@ def ensure_base_requirements():
     except ImportError:
         install('rich', 'rich')
     try:
-        import rich # pylint: disable=unused-import
+        import rich # pylint: disable=unused-import # noqa: F811
     except ImportError:
         pass
 
@@ -784,8 +782,12 @@ def check_extensions():
 
 
 def get_version():
-    version = None
+    global version # pylint: disable=global-statement
     if version is None:
+        try:
+            subprocess.run('git config log.showsignature false', stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell=True, check=True)
+        except Exception:
+            pass
         try:
             res = subprocess.run('git log --pretty=format:"%h %ad" -1 --date=short', stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell=True, check=True)
             ver = res.stdout.decode(encoding = 'utf8', errors='ignore') if len(res.stdout) > 0 else '  '
@@ -958,10 +960,14 @@ def git_reset():
     log.warning('Running GIT reset')
     global quick_allowed # pylint: disable=global-statement
     quick_allowed = False
-    git('merge --abort')
+    git('add .')
+    git('stash')
+    git('merge --abort', folder=None, ignore=True)
     git('fetch --all')
     git('reset --hard origin/master')
     git('checkout master')
+    git('submodule update --init --recursive')
+    git('submodule sync --recursive')
     log.info('GIT reset complete')
 
 
