@@ -6,8 +6,6 @@ from modules.paths_internal import extensions_dir, extensions_builtin_dir
 
 
 extensions = []
-
-
 if not os.path.exists(extensions_dir):
     os.makedirs(extensions_dir)
 
@@ -40,8 +38,8 @@ class Extension:
         self.mtime = 0
         self.ctime = 0
 
-    def read_info(self, force=False):
-        if self.have_info_from_repo and not force:
+    def read_info_from_repo(self):
+        if self.have_info_from_repo:
             return
         self.have_info_from_repo = True
         repo = None
@@ -118,7 +116,7 @@ class Extension:
         self.can_update = False
         self.status = "latest"
 
-    def git_fetch(self, commit='origin'):
+    def fetch_and_reset_hard(self, commit='origin'):
         repo = git.Repo(self.path)
         # Fix: `error: Your local changes to the following files would be overwritten by merge`,
         # because WSL2 Docker set 755 file permissions instead of 644, this results to the error.
