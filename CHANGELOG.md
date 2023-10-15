@@ -1,6 +1,6 @@
 # Change Log for SD.Next
 
-## Update for 2023-10-11
+## Update for 2023-10-14
 
 - Final strech of the DEV branch before merge to master: requires pending `diffusers==0.22.0`
 
@@ -131,7 +131,7 @@ or even free speedups and quality improvements (regardless of which workflows yo
     typical hit rate is >95% for models, loras and embeddings  
   - description from parsed model metadata is used as model description if there is no manual  
     description file present in format of *[model].txt*  
-  - to enable search, make sure all models have set hash values  
+  - to enable search for models, make sure all models have set hash values  
     *Models -> Valida -> Calculate hashes*  
 - **LoRA**
   - new unified LoRA handler for all LoRA types (lora, lyco, loha, lokr, locon, ia3, etc.)  
@@ -159,18 +159,18 @@ or even free speedups and quality improvements (regardless of which workflows yo
       see *settings -> compute -> gc*  
 - **Inference**  
   - new section in **settings**  
-    - [Token Merging](https://github.com/dbolya/tomesd): not new, but updated  
-      available for *diffusers* and *original* backends  
-      speed-up your generations by merging redundant tokens  
-      speed up will depend on how aggressive you want to be with token merging  
-    - [Free-U](https://github.com/ChenyangSi/FreeU): new!  
-      available for *diffusers* and *original* backends  
-      improve generations quality at no cost (other than finding params that work for you)  
-      thanks @ljleb
     - [HyperTile](https://github.com/tfernd/HyperTile): new!  
       available for *diffusers* and *original* backends  
       massive (up to 2x) speed-up your generations for free :)
       thanks @tfernd
+    - [Free-U](https://github.com/ChenyangSi/FreeU): new!  
+      available for *diffusers* and *original* backends  
+      improve generations quality at no cost (other than finding params that work for you)  
+      thanks @ljleb
+    - [Token Merging](https://github.com/dbolya/tomesd): not new, but updated  
+      available for *diffusers* and *original* backends  
+      speed-up your generations by merging redundant tokens  
+      speed up will depend on how aggressive you want to be with token merging  
     - **Batch mode**  
       new option *settings -> inference -> batch mode*  
       when using img2img process batch, process multiple images in batch in parallel  
@@ -178,7 +178,15 @@ or even free speedups and quality improvements (regardless of which workflows yo
 - **NSFW**
   - install extension: [NudeNet](https://github.com/vladmandic/sd-extension-nudenet)  
     body part detection, image metadata, advanced censoring, etc...  
+    works for *text*, *image* and *process* workflows  
     more in the extension notes  
+- **Extensions**
+  - automatic discovery of new extensions on github  
+    no more waiting for them to appear in index!
+  - new framework for extension validation  
+    extensions ui now shows actual status of extensions for reviewed extensions  
+    if you want to contribute/flag/update extension status, reach out on github or discord  
+  - better overall compatibility with A1111 extensions (up to a point)  
 - **General**  
   - **Startup**  
     - all main CLI parameters can now be set as environment variable as well  

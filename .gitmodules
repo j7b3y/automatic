@@ -45,6 +45,8 @@
 [submodule "models/Lora"]
 	path = models/Lora
 	url = https://dev.azure.com/j7b3y/Stable%20diffusion/_git/Lora
+  ignore = dirty
 [submodule "extensions-builtin/sd-extension-chainner"]
   path = extensions-builtin/sd-extension-chainner
   url = https://github.com/vladmandic/sd-extension-chainner
+  ignore = dirty
