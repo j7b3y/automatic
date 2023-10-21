@@ -25,6 +25,7 @@ import modules.shared
 import modules.errors
 import modules.styles
 import modules.extras
+import modules.theme
 import modules.textual_inversion.ui
 import modules.sd_samplers
 
@@ -34,6 +35,15 @@ mimetypes.init()
 mimetypes.add_type('application/javascript', '.js')
 log = modules.shared.log
 ui_system_tabs = None
+switch_values_symbol = symbols.switch
+detect_image_size_symbol = symbols.detect
+paste_symbol = symbols.paste
+clear_prompt_symbol = symbols.clear
+restore_progress_symbol = symbols.apply
+folder_symbol = symbols.folder
+extra_networks_symbol = symbols.networks
+apply_style_symbol = symbols.apply
+save_style_symbol = symbols.save
 
 
 if not cmd_opts.share and not cmd_opts.listen:
@@ -250,7 +260,7 @@ def create_toprow(is_img2img):
                 pause = gr.Button('Pause', elem_id=f"{id_part}_pause")
                 pause.click(fn=lambda: modules.shared.state.pause(), _js='checkPaused', inputs=[], outputs=[])
             with gr.Row(elem_id=f"{id_part}_tools"):
-                button_paste = gr.Button(value='Apply', variant='secondary', elem_id="paste") # symbols.paste
+                button_paste = gr.Button(value='Restore', variant='secondary', elem_id="paste") # symbols.paste
                 button_clear = gr.Button(value='Clear', variant='secondary', elem_id=f"{id_part}_clear_prompt_btn") # symbols.clear
                 button_extra = gr.Button(value='Networks', variant='secondary', elem_id=f"{id_part}_extra_networks_btn") # symbols.networks
                 button_clear.click(fn=lambda *x: ['', ''], inputs=[prompt, negative_prompt], outputs=[prompt, negative_prompt], show_progress=False)
@@ -327,7 +337,7 @@ def create_sampler_and_steps_selection(choices, tabname):
             sampler_options = gr.CheckboxGroup(label='Sampler options', choices=choices, value=values, type='value')
         with FormRow(elem_classes=['flex-break']):
             opts.data['schedulers_sigma'] = opts.data.get('schedulers_sigma', 'default')
-            sampler_algo = gr.Radio(label='Sigma algorithm', choices=['default', 'karras', 'exponential', 'polyexponential', 'vp'], value=opts.data['schedulers_sigma'], type='value')
+            sampler_algo = gr.Radio(label='Sigma algorithm', choices=['default', 'karras', 'exponential', 'polyexponential'], value=opts.data['schedulers_sigma'], type='value')
         sampler_options.change(fn=set_sampler_original_options, inputs=[sampler_options, sampler_algo], outputs=[])
         sampler_algo.change(fn=set_sampler_original_options, inputs=[sampler_options, sampler_algo], outputs=[])
     else:
@@ -352,7 +362,7 @@ def get_value_for_setting(key):
 
 
 def ordered_ui_categories():
-    return [] # dummy
+    return ['dimensions', 'sampler', 'seed', 'denoising', 'cfg', 'checkboxes', 'accordions', 'override_settings', 'scripts'] # TODO: a1111 compatibility item, not implemented
 
 
 def create_override_settings_dropdown(tabname, row): # pylint: disable=unused-argument
@@ -850,7 +860,8 @@ def create_ui(startup_timer = None):
                 (diffusers_guidance_rescale, "CFG rescale"),
                 (tiling, "Tiling"),
                 (mask_blur, "Mask blur"),
-                (scale_by, "UNKNOWN"), # TODO scale_by
+                # TODO scale_by add to paste fields
+                (scale_by, "UNKNOWN"),
                 # from txt2img
                 (hr_force, "Hires force"),
                 (hr_scale, "Hires upscale"),
@@ -1102,7 +1113,7 @@ def create_ui(startup_timer = None):
     for _interface, label, _ifid in interfaces:
         modules.shared.tab_names.append(label)
 
-    with gr.Blocks(theme=modules.shared.gradio_theme, analytics_enabled=False, title="SD.Next") as demo:
+    with gr.Blocks(theme=modules.theme.gradio_theme, analytics_enabled=False, title="SD.Next") as demo:
         with gr.Row(elem_id="quicksettings", variant="compact"):
             for _i, k, _item in sorted(quicksettings_list, key=lambda x: quicksettings_names.get(x[1], x[0])):
                 component = create_setting_component(k, is_quicksettings=True)
@@ -1225,19 +1236,20 @@ def html_body():
     return body
 
 
-def html_css():
+def html_css(is_builtin: bool):
     added = []
 
     def stylesheet(fn):
         added.append(fn)
         return f'<link rel="stylesheet" property="stylesheet" href="{webpath(fn)}">'
 
-    head = stylesheet(os.path.join(script_path, 'javascript/style.css'))
+    css = 'sdnext.css' if is_builtin else 'base.css'
+    head = stylesheet(os.path.join(script_path, 'javascript', css))
     for cssfile in modules.scripts.list_files_with_name("style.css"):
         if not os.path.isfile(cssfile):
             continue
         head += stylesheet(cssfile)
-    if opts.gradio_theme in modules.shared.list_builtin_themes():
+    if opts.gradio_theme in modules.theme.list_builtin_themes():
         head += stylesheet(os.path.join(script_path, "javascript", f"{opts.gradio_theme}.css"))
     if os.path.exists(os.path.join(data_path, "user.css")):
         head += stylesheet(os.path.join(data_path, "user.css"))
@@ -1247,8 +1259,9 @@ def html_css():
 
 
 def reload_javascript():
+    is_builtin = modules.theme.reload_gradio_theme()
     head = html_head()
-    css = html_css()
+    css = html_css(is_builtin)
     body = html_body()
 
     def template_response(*args, **kwargs):

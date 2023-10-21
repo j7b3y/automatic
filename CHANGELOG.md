@@ -1,16 +1,48 @@
 # Change Log for SD.Next
 
-## Update for 2023-10-14
+## Update for 2023-10-20
 
-- Final strech of the DEV branch before merge to master: requires pending `diffusers==0.22.0`
+Service release addressing all zero-day issues reported so far...
+
+**Fixes**
+- fix freeu for backend original and add it to xyz grid
+- fix loading diffuser models in huggingface format from non-standard location
+- fix default styles looking in wrong location
+- fix missing upscaler folder on initial startup
+- fix handling of relative path for models
+- fix simple live preview device mismatch
+- fix batch img2img
+- fix diffusers dpm++ 2m, dpm++ 1s, deis samplers
+- fix new style filename template
+- fix image name template using model name
+- fix model path using relative path
+- fix torch-rocm version detection (thanks @xangelix)
+- fix chainner upscalers color clipping
+- force second requirements check on startup
+- remove lyco, multiple_tqdm
+- enhance extension compatibility for exensions directly importing codeformers  
+- enhance extension compatibility for exensions directly accessing processing params  
+- clearly mark external themes in ui
+- new option: *settings -> images -> keep incomplete*
+  can be used to skip vae decode on aborted/skipped/interrupted image generations
+- update `openvino` (thanks @disty0)
+- update `typing-extensions`
+
+**Themes**
+- all built-in themes are fully supported:  
+  - *black-teal (default), light-teal, black-orange, invoked, amethyst-nightfall, midnight-barbie*  
+- if you're using any **gradio default** themes or a **3rd party** theme or  that are not optimized for SD.Next, you may experience issues  
+  default minimal style has been updated for compatibility, but actual styling is completely outside of SD.Next control  
+
+## Update for 2023-10-17
 
 This is a major release, with many changes and new functionality...  
 
-Note that for this release its recommended to perform a clean install (e.g. fresh `git clone`)  
-Upgrades are still possible and supported, but clean install is recommended for best experience  
-
 Changelog is massive, but do read through or you'll be missing on some very cool new functionality  
 or even free speedups and quality improvements (regardless of which workflows you're using)!  
+
+Note that for this release its recommended to perform a clean install (e.g. fresh `git clone`)  
+Upgrades are still possible and supported, but clean install is recommended for best experience  
 
 - **UI**  
   - added **change log** to UI  
@@ -47,6 +79,11 @@ or even free speedups and quality improvements (regardless of which workflows yo
       for example: *"Extra: sampler: Euler a, width: 480, height: 640, steps: 30, cfg scale: 10, clip skip: 2"*
   - **VAE**  
     - VAEs are now also listed as part of extra networks  
+    - Image preview methods have been redesigned: simple, approximate, taesd, full  
+      please set desired preview method in settings  
+    - both original and diffusers backend now support "full quality" setting  
+      if you desired model or platform does not support FP16 and/or you have a low-end hardware and cannot use FP32  
+      you can disable "full quality" in advanced params and it will likely reduce decode errors (infamous black images)  
   - **LoRA**  
     - LoRAs are now automatically filtered based on compatibility with currently loaded model  
       note that if lora type cannot be auto-determined, it will be left in the list  
@@ -142,7 +179,7 @@ or even free speedups and quality improvements (regardless of which workflows yo
   - **CUDA**:  
     - default updated to `torch` *2.1.0* with cuda *12.1*  
     - testing moved to `torch` *2.2.0-dev/cu122*  
-    - check out *generate context menu -> show nvml*
+    - check out *generate context menu -> show nvml* for live gpu stats (memory, power, temp, clock, etc.)
   - **Intel Arc/IPEX**:  
     - tons of optimizations, built-in binary wheels for Windows  
       i have to say, intel arc/ipex is getting to be quite a player, especially with openvino  
@@ -151,9 +188,12 @@ or even free speedups and quality improvements (regardless of which workflows yo
     - updated installer to support detect `ROCm` *5.4/5.5/5.6/5.7*  
     - support for `torch-rocm-5.7`
   - **xFormers**:
-    - default updated to *0.0.22*  
-    - note that latest xformers are still not compatible with standard torch 2.1.0 with cuda 12.1  
-      either downgrade torch to 2.0.1 with cuda 11.8 or build xformers manually  
+    - default updated to *0.0.23*  
+    - note that latest xformers are still not compatible with cuda 12.1  
+      recommended to use torch 2.1.0 with cuda 11.8  
+      if you attempt to use xformers with cuda 12.1, it will force a full xformers rebuild on install  
+      which can take a very long time and may/may-not work  
+    - added cmd param `--use-xformers` to force usage of exformers  
   - **GC**:  
     - custom garbage collect threshold to reduce vram memory usage, thanks @Disty0  
       see *settings -> compute -> gc*  
@@ -161,21 +201,23 @@ or even free speedups and quality improvements (regardless of which workflows yo
   - new section in **settings**  
     - [HyperTile](https://github.com/tfernd/HyperTile): new!  
       available for *diffusers* and *original* backends  
-      massive (up to 2x) speed-up your generations for free :)
+      massive (up to 2x) speed-up your generations for free :)  
+      *note: hypertile is not compatible with any extension that modifies processing parameters such as resolution*  
       thanks @tfernd
     - [Free-U](https://github.com/ChenyangSi/FreeU): new!  
       available for *diffusers* and *original* backends  
       improve generations quality at no cost (other than finding params that work for you)  
-      thanks @ljleb
+      *note: temporarily disabled for diffusers pending release of diffusers==0.22*  
+      thanks @ljleb  
     - [Token Merging](https://github.com/dbolya/tomesd): not new, but updated  
       available for *diffusers* and *original* backends  
       speed-up your generations by merging redundant tokens  
       speed up will depend on how aggressive you want to be with token merging  
     - **Batch mode**  
       new option *settings -> inference -> batch mode*  
-      when using img2img process batch, process multiple images in batch in parallel  
+      when using img2img process batch, optionally process multiple images in batch in parallel  
       thanks @Symbiomatrix
-- **NSFW**
+- **NSFW Detection/Censor**  
   - install extension: [NudeNet](https://github.com/vladmandic/sd-extension-nudenet)  
     body part detection, image metadata, advanced censoring, etc...  
     works for *text*, *image* and *process* workflows  
@@ -187,6 +229,12 @@ or even free speedups and quality improvements (regardless of which workflows yo
     extensions ui now shows actual status of extensions for reviewed extensions  
     if you want to contribute/flag/update extension status, reach out on github or discord  
   - better overall compatibility with A1111 extensions (up to a point)  
+  - [MultiDiffusion](https://github.com/pkuliyi2015/multidiffusion-upscaler-for-automatic1111)  
+    has been removed from list of built-in extensions  
+    you can still install it manually if desired  
+  - [LyCORIS]<https://github.com/KohakuBlueleaf/a1111-sd-webui-lycoris>  
+    has been removed from list of built-in extensions  
+    it is considered obsolete given that all functionality is now built-in  
 - **General**  
   - **Startup**  
     - all main CLI parameters can now be set as environment variable as well  

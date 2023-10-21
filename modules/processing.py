@@ -35,6 +35,7 @@ import modules.sd_samplers_common
 import modules.sd_models
 import modules.sd_vae
 import modules.sd_vae_approx
+import modules.taesd.sd_vae_taesd
 import modules.generation_parameters_copypaste
 from modules.sd_hijack_hypertile import context_hypertile_vae, context_hypertile_unet, hypertile_set
 
@@ -162,6 +163,7 @@ class StableDiffusionProcessing:
         self.refiner_steps = 5
         self.refiner_start = 0
         self.ops = []
+        self.resize_mode: int = 0
         self.ddim_discretize = shared.opts.ddim_discretize
         self.s_min_uncond = shared.opts.s_min_uncond
         self.s_churn = shared.opts.s_churn
@@ -170,10 +172,15 @@ class StableDiffusionProcessing:
         self.s_max = shared.opts.s_max
         self.s_tmin = shared.opts.s_tmin
         self.s_tmax = float('inf')  # not representable as a standard ui option
+        shared.opts.data['clip_skip'] = clip_skip
+        # TODO a1111 compatibility items
+        self.refiner_switch_at = 0
+        self.hr_prompt = ''
+        self.all_hr_prompts = []
+        self.hr_negative_prompt = ''
+        self.all_hr_negative_prompts = []
         self.comments = {}
         self.is_api = False
-        self.resize_mode: int = 0
-        shared.opts.data['clip_skip'] = clip_skip
 
     @property
     def sd_model(self):
@@ -433,15 +440,29 @@ def create_random_tensors(shape, seeds, subseeds=None, subseed_strength=0.0, see
     return x
 
 
-def decode_first_stage(model, x):
+def decode_first_stage(model, x, full_quality=True):
+    if not shared.opts.keep_incomplete and (shared.state.skipped or shared.state.interrupted):
+        shared.log.debug(f'Decode VAE: skipped={shared.state.skipped} interrupted={shared.state.interrupted}')
+        x_sample = torch.zeros((len(x), 3, x.shape[2] * 8, x.shape[3] * 8), dtype=devices.dtype_vae, device=devices.device)
+        return x_sample
     with devices.autocast(disable = x.dtype==devices.dtype_vae):
-        if hasattr(model, 'decode_first_stage'):
-            x = model.decode_first_stage(x)
-        elif hasattr(model, 'vae'):
-            x = model.vae(x)
-        else:
-            shared.log.warning('Cannot decode first stage')
-    return x
+        try:
+            if full_quality:
+                if hasattr(model, 'decode_first_stage'):
+                    x_sample = model.decode_first_stage(x)
+                elif hasattr(model, 'vae'):
+                    x_sample = model.vae(x)
+                else:
+                    x_sample = x
+                    shared.log.error('Decode VAE unknown model')
+            else:
+                x_sample = torch.zeros((len(x), 3, x.shape[2] * 8, x.shape[3] * 8), dtype=devices.dtype_vae, device=devices.device)
+                for i in range(len(x_sample)):
+                    x_sample[i] = (modules.taesd.sd_vae_taesd.decode(x[i]) * 2.0) - 1.0
+        except Exception as e:
+            x_sample = x
+            shared.log.error(f'Decode VAE: {e}')
+    return x_sample
 
 
 def get_fixed_seed(seed):
@@ -755,8 +776,6 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
         t0 = time.time()
         with devices.autocast():
             p.init(p.all_prompts, p.all_seeds, p.all_subseeds)
-            if shared.opts.live_previews_enable and shared.opts.show_progress_type == "Approximate NN" and shared.backend == shared.Backend.ORIGINAL:
-                modules.sd_vae_approx.model()
         if shared.state.job_count == -1:
             shared.state.job_count = p.n_iter
         extra_network_data = None
@@ -801,7 +820,7 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
                         comments[comment] = 1
                 with devices.without_autocast() if devices.unet_needs_upcast else devices.autocast():
                     samples_ddim = p.sample(conditioning=c, unconditional_conditioning=uc, seeds=p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength, prompts=p.prompts)
-                x_samples_ddim = [decode_first_stage(p.sd_model, samples_ddim[i:i+1].to(dtype=devices.dtype_vae))[0].cpu() for i in range(samples_ddim.size(0))]
+                x_samples_ddim = [decode_first_stage(p.sd_model, samples_ddim[i:i+1].to(dtype=devices.dtype_vae), p.full_quality)[0].cpu() for i in range(samples_ddim.size(0))]
                 try:
                     for x in x_samples_ddim:
                         devices.test_for_nans(x, "vae")
@@ -811,7 +830,7 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
                         devices.dtype_vae = torch.bfloat16
                         vae_file, vae_source = modules.sd_vae.resolve_vae(p.sd_model.sd_model_checkpoint)
                         modules.sd_vae.load_vae(p.sd_model, vae_file, vae_source)
-                        x_samples_ddim = [decode_first_stage(p.sd_model, samples_ddim[i:i+1].to(dtype=devices.dtype_vae))[0].cpu() for i in range(samples_ddim.size(0))]
+                        x_samples_ddim = [decode_first_stage(p.sd_model, samples_ddim[i:i+1].to(dtype=devices.dtype_vae), p.full_quality)[0].cpu() for i in range(samples_ddim.size(0))]
                         for x in x_samples_ddim:
                             devices.test_for_nans(x, "vae")
                     else:
@@ -825,6 +844,9 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
                 x_samples_ddim = process_diffusers(p, p.seeds, p.prompts, p.negative_prompts)
             else:
                 raise ValueError(f"Unknown backend {shared.backend}")
+
+            if not shared.opts.keep_incomplete and shared.state.interrupted:
+                x_samples_ddim = []
 
             if shared.cmd_opts.lowvram or shared.cmd_opts.medvram and shared.backend == shared.Backend.ORIGINAL:
                 modules.lowvram.send_everything_to_cpu()
@@ -926,7 +948,7 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
         index_of_first_image=index_of_first_image,
         infotexts=infotexts,
     )
-    if p.scripts is not None and not shared.state.interrupted:
+    if p.scripts is not None and not (shared.state.interrupted or shared.state.skipped):
         p.scripts.postprocess(p, res)
     return res
 
@@ -1067,7 +1089,7 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
             for i in range(samples.shape[0]):
                 save_intermediate(samples, i)
             if latent_scale_mode is None or self.hr_force: # non-latent upscaling
-                decoded_samples = decode_first_stage(self.sd_model, samples.to(dtype=devices.dtype_vae))
+                decoded_samples = decode_first_stage(self.sd_model, samples.to(dtype=devices.dtype_vae), self.full_quality)
                 lowres_samples = torch.clamp((decoded_samples + 1.0) / 2.0, min=0.0, max=1.0)
                 batch_images = []
                 for _i, x_sample in enumerate(lowres_samples):
@@ -1093,7 +1115,7 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
             else:
                 samples = torch.nn.functional.interpolate(samples, size=(target_height // 8, target_width // 8), mode=latent_scale_mode["mode"], antialias=latent_scale_mode["antialias"])
                 if getattr(self, "inpainting_mask_weight", shared.opts.inpainting_mask_weight) < 1.0:
-                    image_conditioning = self.img2img_image_conditioning(decode_first_stage(self.sd_model, samples.to(dtype=devices.dtype_vae)), samples)
+                    image_conditioning = self.img2img_image_conditioning(decode_first_stage(self.sd_model, samples.to(dtype=devices.dtype_vae), self.full_quality), samples)
                 else:
                     image_conditioning = self.txt2img_image_conditioning(samples.to(dtype=devices.dtype_vae))
                 if self.latent_sampler == "PLMS":
@@ -1170,6 +1192,8 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
         crop_region = None
         image_mask = self.image_mask
         if image_mask is not None:
+            if type(image_mask) == list:
+                image_mask = image_mask[0]
             image_mask = image_mask.convert('L')
             if self.inpainting_mask_invert:
                 image_mask = ImageOps.invert(image_mask)
@@ -1223,7 +1247,7 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
                 image = images.resize_image(3, image, self.width, self.height)
             if shared.backend == shared.Backend.DIFFUSERS:
                 unprocessed.append(image)
-            self.init_images = [image] # TODO assign early for diffusers
+            self.init_images = [image] # assign early for diffusers
             if image_mask is not None:
                 if self.inpainting_fill != 1:
                     image = modules.masking.fill(image, latent_mask)

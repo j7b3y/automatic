@@ -39,23 +39,10 @@ module_types = [
 
 
 def assign_network_names_to_compvis_modules(sd_model):
-    """
-    if shared.sd_model.is_sdxl:
-        for i, embedder in enumerate(shared.sd_model.conditioner.embedders):
-            if not hasattr(embedder, 'wrapped'):
-                continue
-            for name, module in embedder.wrapped.named_modules():
-                network_name = f'{i}_{name.replace(".", "_")}'
-                network_layer_mapping[network_name] = module
-                module.network_layer_name = network_name
-    else:
-        for name, module in shared.sd_model.cond_stage_model.wrapped.named_modules():
-            network_name = name.replace(".", "_")
-            network_layer_mapping[network_name] = module
-            module.network_layer_name = network_name
-    """
     network_layer_mapping = {}
     if shared.backend == shared.Backend.DIFFUSERS:
+        if not hasattr(shared.sd_model, 'text_encoder') or not hasattr(shared.sd_model, 'unet'):
+            return
         for name, module in shared.sd_model.text_encoder.named_modules():
             prefix = "lora_te1_" if shared.sd_model_type == "sdxl" else "lora_te_"
             network_name = prefix + name.replace(".", "_")
@@ -387,8 +374,13 @@ def list_available_networks():
     available_network_hash_lookup.clear()
     forbidden_network_aliases.update({"none": 1, "Addams": 1})
     os.makedirs(shared.cmd_opts.lora_dir, exist_ok=True)
-    candidates = list(shared.walk_files(shared.cmd_opts.lora_dir, allowed_extensions=[".pt", ".ckpt", ".safetensors"]))
-    candidates += list(shared.walk_files(shared.cmd_opts.lyco_dir, allowed_extensions=[".pt", ".ckpt", ".safetensors"]))
+    candidates = []
+    if os.path.exists(shared.cmd_opts.lora_dir):
+        candidates += list(shared.walk_files(shared.cmd_opts.lora_dir, allowed_extensions=[".pt", ".ckpt", ".safetensors"]))
+    else:
+        shared.log.warning('LoRA directory not found: path={shared.cmd_opts.lora_dir}')
+    if os.path.exists(shared.cmd_opts.lyco_dir):
+        candidates += list(shared.walk_files(shared.cmd_opts.lyco_dir, allowed_extensions=[".pt", ".ckpt", ".safetensors"]))
     for filename in candidates:
         if os.path.isdir(filename):
             continue

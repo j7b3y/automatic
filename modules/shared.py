@@ -3,9 +3,7 @@ import os
 import sys
 import time
 import json
-import datetime
 import contextlib
-import urllib.request
 from types import SimpleNamespace
 from urllib.parse import urlparse
 from enum import Enum
@@ -13,7 +11,7 @@ import requests
 import gradio as gr
 import fasteners
 from rich.console import Console
-from modules import errors, shared_items, cmd_args, ui_components
+from modules import errors, shared_items, shared_state, cmd_args, ui_components, theme
 from modules.paths_internal import models_path, script_path, data_path, sd_configs_path, sd_default_config, sd_model_file, default_sd_model_file, extensions_dir, extensions_builtin_dir # pylint: disable=W0611
 from modules.dml import memory_providers, default_memory_provider, directml_do_hijack
 import modules.interrogate
@@ -43,7 +41,6 @@ extra_networks = []
 options_templates = {}
 hypernetworks = {}
 loaded_hypernetworks = []
-gradio_theme = gr.themes.Base()
 settings_components = None
 latent_upscale_default_mode = "None"
 latent_upscale_modes = {
@@ -75,122 +72,7 @@ class Backend(Enum):
     DIFFUSERS = 2
 
 
-
-class State:
-    skipped = False
-    interrupted = False
-    paused = False
-    job = ""
-    job_no = 0
-    job_count = 0
-    total_jobs = 0
-    processing_has_refined_job_count = False
-    job_timestamp = '0'
-    sampling_step = 0
-    sampling_steps = 0
-    current_latent = None
-    current_image = None
-    current_image_sampling_step = 0
-    id_live_preview = 0
-    textinfo = None
-    time_start = None
-    need_restart = False
-    server_start = time.time()
-    oom = False
-    debug_output = os.environ.get('SD_STATE_DEBUG', None)
-
-    def skip(self):
-        log.debug('Requested skip')
-        self.skipped = True
-
-    def interrupt(self):
-        log.debug('Requested interrupt')
-        self.interrupted = True
-
-    def pause(self):
-        self.paused = not self.paused
-        log.debug(f'Requested {"pause" if self.paused else "continue"}')
-
-    def nextjob(self):
-        if opts.live_previews_enable and opts.show_progress_every_n_steps == -1:
-            self.do_set_current_image()
-        self.job_no += 1
-        self.sampling_step = 0
-        self.current_image_sampling_step = 0
-
-    def dict(self):
-        obj = {
-            "skipped": self.skipped,
-            "interrupted": self.interrupted,
-            "job": self.job,
-            "job_count": self.job_count,
-            "job_timestamp": self.job_timestamp,
-            "job_no": self.job_no,
-            "sampling_step": self.sampling_step,
-            "sampling_steps": self.sampling_steps,
-        }
-        return obj
-
-    def begin(self, title=""):
-        self.total_jobs += 1
-        self.current_image = None
-        self.current_image_sampling_step = 0
-        self.current_latent = None
-        self.id_live_preview = 0
-        self.interrupted = False
-        self.job = title
-        self.job_count = -1
-        self.job_no = 0
-        self.job_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        self.paused = False
-        self.processing_has_refined_job_count = False
-        self.sampling_step = 0
-        self.skipped = False
-        self.textinfo = None
-        self.time_start = time.time()
-        if self.debug_output:
-            log.debug(f'State begin: {self.job}')
-        devices.torch_gc()
-
-    def end(self):
-        if self.time_start is None: # someone called end before being
-            log.debug(f'Access state.end: {sys._getframe().f_back.f_code.co_name}') # pylint: disable=protected-access
-            self.time_start = time.time()
-        if self.debug_output:
-            log.debug(f'State end: {self.job} time={time.time() - self.time_start:.2f}s')
-        self.job = ""
-        self.job_count = 0
-        self.job_no = 0
-        self.paused = False
-        self.interrupted = False
-        self.skipped = False
-        devices.torch_gc()
-
-    def set_current_image(self):
-        """sets self.current_image from self.current_latent if enough sampling steps have been made after the last call to this"""
-        if not parallel_processing_allowed:
-            return
-        if abs(self.sampling_step - self.current_image_sampling_step) >= opts.show_progress_every_n_steps and opts.live_previews_enable and opts.show_progress_every_n_steps > 0:
-            self.do_set_current_image()
-
-    def do_set_current_image(self):
-        if self.current_latent is None:
-            return
-        import modules.sd_samplers # pylint: disable=W0621
-        try:
-            image = modules.sd_samplers.samples_to_image_grid(self.current_latent) if opts.show_progress_grid else modules.sd_samplers.sample_to_image(self.current_latent)
-            self.assign_current_image(image)
-            self.current_image_sampling_step = self.sampling_step
-        except Exception:
-            # log.error(f'Error setting current image: step={self.sampling_step} {e}')
-            pass
-
-    def assign_current_image(self, image):
-        self.current_image = image
-        self.id_live_preview += 1
-
-
-state = State()
+state = shared_state.State()
 if not hasattr(cmd_opts, "use_openvino"):
     cmd_opts.use_openvino = False
 if cmd_opts.use_openvino:
@@ -277,53 +159,18 @@ def list_samplers():
 
 def temp_disable_extensions():
     disabled = []
+    if cmd_opts.safe:
+        for ext in ['sd-webui-controlnet', 'multidiffusion-upscaler-for-automatic1111', 'a1111-sd-webui-lycoris', 'sd-webui-agent-scheduler', 'clip-interrogator-ext', 'stable-diffusion-webui-rembg', 'sd-extension-chainner', 'stable-diffusion-webui-images-browser']:
+            if ext not in opts.disabled_extensions:
+                disabled.append(ext)
+        log.info(f'Safe mode disabling extensions: {disabled}')
     if backend == Backend.DIFFUSERS:
         for ext in ['sd-webui-controlnet', 'multidiffusion-upscaler-for-automatic1111', 'a1111-sd-webui-lycoris']:
             if ext not in opts.disabled_extensions:
                 disabled.append(ext)
         log.info(f'Diffusers disabling uncompatible extensions: {disabled}')
-    if opts.lyco_patch_lora and backend != Backend.DIFFUSERS:
-        cmd_opts.lyco_dir = opts.lora_dir
-        if 'Lora' not in opts.disabled_extensions:
-            disabled.append('Lora')
     cmd_opts.controlnet_loglevel = 'WARNING'
     return disabled
-
-
-def list_builtin_themes():
-    files = [os.path.splitext(f)[0] for f in os.listdir('javascript') if f.endswith('.css')]
-    return files
-
-
-def list_themes():
-    fn = os.path.join('html', 'themes.json')
-    if not os.path.exists(fn):
-        refresh_themes()
-    if os.path.exists(fn):
-        with open(fn, mode='r', encoding='utf=8') as f:
-            res = json.loads(f.read())
-    else:
-        res = []
-    builtin = list_builtin_themes()
-    default = ["gradio/default", "gradio/base", "gradio/glass", "gradio/monochrome", "gradio/soft"]
-    external = {x['id'] for x in res if x['status'] == 'RUNNING' and 'test' not in x['id'].lower()}
-    log.debug(f'Themes: builtin={len(builtin)} default={len(default)} external={len(external)}')
-    themes = sorted(builtin) + sorted(default) + sorted(external, key=str.casefold)
-    return themes
-
-
-def refresh_themes():
-    try:
-        r = req('https://huggingface.co/datasets/freddyaboulton/gradio-theme-subdomains/resolve/main/subdomains.json')
-        if r.status_code == 200:
-            res = r.json()
-            fn = os.path.join('html', 'themes.json')
-            writefile(res, fn)
-            list_themes()
-        else:
-            log.error('Error refreshing UI themes')
-    except Exception:
-        log.error('Exception refreshing UI themes')
 
 
 def readfile(filename, silent=False):
@@ -442,15 +289,16 @@ options_templates.update(options_section(('cuda', "Compute Settings"), {
     "ipex_optimize": OptionInfo(True if devices.backend == "ipex" else False, "Enable IPEX Optimize for Intel GPUs"),
     "directml_memory_provider": OptionInfo(default_memory_provider, 'DirectML memory stats provider', gr.Radio, {"choices": memory_providers}),
     "openvino_disable_model_caching": OptionInfo(False, "OpenVINO disable model caching"),
-    "openvino_multi_gpu": OptionInfo(False, "OpenVINO use Multi GPU"),
-    "openvino_remove_igpu_from_multi": OptionInfo(False, "OpenVINO remove iGPU from Multi GPU"),
+    "openvino_hetero_gpu": OptionInfo(False, "OpenVINO use Hetero Device for single inference with multiple devices"),
+    "openvino_remove_cpu_from_hetero": OptionInfo(False, "OpenVINO remove CPU from Hetero Device"),
+    "openvino_remove_igpu_from_hetero": OptionInfo(False, "OpenVINO remove iGPU from Hetero Device"),
 }))
 
 options_templates.update(options_section(('advanced', "Inference Settings"), {
     "token_merging_sep": OptionInfo("<h2>Token merging</h2>", "", gr.HTML),
     "token_merging_ratio": OptionInfo(0.0, "Token merging ratio (txt2img)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
     "token_merging_ratio_img2img": OptionInfo(0.0, "Token merging ratio (img2img)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
-    "token_merging_ratio_hr": OptionInfo(0.0, "Token merging ratio for (hires)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
+    "token_merging_ratio_hr": OptionInfo(0.0, "Token merging ratio (hires)", gr.Slider, {"minimum": 0.0, "maximum": 0.9, "step": 0.1}),
 
     "freeu_sep": OptionInfo("<h2>FreeU</h2>", "", gr.HTML),
     "freeu_enabled": OptionInfo(False, "FreeU enabled"),
@@ -499,9 +347,9 @@ options_templates.update(options_section(('system-paths', "System Paths"), {
     "ckpt_dir": OptionInfo(os.path.join(paths.models_path, 'Stable-diffusion'), "Folder with stable diffusion models", folder=True),
     "diffusers_dir": OptionInfo(os.path.join(paths.models_path, 'Diffusers'), "Folder with Hugggingface models", folder=True),
     "vae_dir": OptionInfo(os.path.join(paths.models_path, 'VAE'), "Folder with VAE files", folder=True),
-    # "sd_lora": OptionInfo("", "Add LoRA to prompt", gr.Textbox, {"visible": False}),
+    "sd_lora": OptionInfo("", "Add LoRA to prompt", gr.Textbox, {"visible": False}),
     "lora_dir": OptionInfo(os.path.join(paths.models_path, 'Lora'), "Folder with LoRA network(s)", folder=True),
-    "lyco_dir": OptionInfo(os.path.join(paths.models_path, 'LyCORIS'), "Folder with LyCORIS network(s)", folder=True),
+    "lyco_dir": OptionInfo(os.path.join(paths.models_path, 'LyCORIS'), "Folder with LyCORIS network(s)", gr.Text, {"visible": False}),
     "styles_dir": OptionInfo(os.path.join(paths.data_path, 'styles.csv'), "File or Folder with user-defined styles", folder=True),
     "embeddings_dir": OptionInfo(os.path.join(paths.models_path, 'embeddings'), "Folder with textual inversion embeddings", folder=True),
     "hypernetwork_dir": OptionInfo(os.path.join(paths.models_path, 'hypernetworks'), "Folder with Hypernetwork models", folder=True),
@@ -517,6 +365,7 @@ options_templates.update(options_section(('system-paths', "System Paths"), {
 }))
 
 options_templates.update(options_section(('saving-images', "Image Options"), {
+    "keep_incomplete": OptionInfo(True, "Keep incomplete images"),
     "samples_save": OptionInfo(True, "Always save all generated images"),
     "samples_format": OptionInfo('jpg', 'File format for generated images', gr.Dropdown, {"choices": ["jpg", "png", "webp", "tiff", "jp2"]}),
     "jpeg_quality": OptionInfo(90, "Quality for saved images", gr.Slider, {"minimum": 1, "maximum": 100, "step": 1}),
@@ -547,17 +396,17 @@ options_templates.update(options_section(('saving-images', "Image Options"), {
 }))
 
 options_templates.update(options_section(('saving-paths', "Image Naming & Paths"), {
-    "saving_sep_images": OptionInfo("<h2>Images</h2>", "", gr.HTML),
+    "saving_sep_images": OptionInfo("<h2>Save options</h2>", "", gr.HTML),
     "save_images_add_number": OptionInfo(True, "Add number to filename when saving", component_args=hide_dirs),
-    "use_original_name_batch": OptionInfo(True, "Use original name for output filename during batch process"),
-    "use_upscaler_name_as_suffix": OptionInfo(True, "Use upscaler name as filename suffix in the extras tab", gr.Checkbox, {"visible": False}),
+    "use_original_name_batch": OptionInfo(True, "Use original name during batch process"),
+    "use_upscaler_name_as_suffix": OptionInfo(True, "Use upscaler as suffix", gr.Checkbox, {"visible": False}),
     "samples_filename_pattern": OptionInfo("[seq]-[model_name]-[prompt_words]", "Images filename pattern", component_args=hide_dirs),
+    "directories_max_prompt_words": OptionInfo(8, "Max words for [prompt_words] pattern", gr.Slider, {"minimum": 1, "maximum": 99, "step": 1, **hide_dirs}),
+    "use_save_to_dirs_for_ui": OptionInfo(False, "Save images to a subdirectory when using Save button", gr.Checkbox, {"visible": False}),
+    "save_to_dirs": OptionInfo(False, "Save images to a subdirectory"),
+    "directories_filename_pattern": OptionInfo("[date]", "Directory name pattern", component_args=hide_dirs),
 
     "outdir_sep_dirs": OptionInfo("<h2>Directories</h2>", "", gr.HTML),
-    "save_to_dirs": OptionInfo(False, "Save images to a subdirectory"),
-    "use_save_to_dirs_for_ui": OptionInfo(False, "Save images to a subdirectory when using Save button", gr.Checkbox, {"visible": False}),
-    "directories_filename_pattern": OptionInfo("[date]", "Directory name pattern", component_args=hide_dirs),
-    "directories_max_prompt_words": OptionInfo(8, "Max prompt words for [prompt_words] pattern", gr.Slider, {"minimum": 1, "maximum": 99, "step": 1, **hide_dirs}),
     "outdir_samples": OptionInfo("", "Output directory for images", component_args=hide_dirs, folder=True),
     "outdir_txt2img_samples": OptionInfo("outputs/text", 'Output directory for txt2img images', component_args=hide_dirs, folder=True),
     "outdir_img2img_samples": OptionInfo("outputs/image", 'Output directory for img2img images', component_args=hide_dirs, folder=True),
@@ -575,9 +424,10 @@ options_templates.update(options_section(('saving-paths', "Image Naming & Paths"
 
 options_templates.update(options_section(('ui', "User Interface"), {
     "motd": OptionInfo(True, "Show MOTD"),
-    "gradio_theme": OptionInfo("black-teal", "UI theme", gr.Dropdown, lambda: {"choices": list_themes()}, refresh=refresh_themes),
+    "gradio_theme": OptionInfo("black-teal", "UI theme", gr.Dropdown, lambda: {"choices": theme.list_themes()}, refresh=theme.refresh_themes),
     "theme_style": OptionInfo("Auto", "Theme mode", gr.Radio, {"choices": ["Auto", "Dark", "Light"]}),
     "tooltips": OptionInfo("UI Tooltips", "UI tooltips", gr.Radio, {"choices": ["None", "Browser default", "UI tooltips"], "visible": False}),
+    "gallery_height": OptionInfo("", "Gallery height", gr.Textbox),
     "compact_view": OptionInfo(False, "Compact view"),
     "return_grid": OptionInfo(True, "Show grid in results"),
     "return_mask": OptionInfo(False, "For inpainting, include the greyscale mask in results"),
@@ -600,7 +450,7 @@ options_templates.update(options_section(('live-preview', "Live Previews"), {
     "notification_audio_enable": OptionInfo(False, "Play a sound when images are finished generating"),
     "notification_audio_path": OptionInfo("html/notification.mp3","Path to notification sound", component_args=hide_dirs, folder=True),
     "show_progress_every_n_steps": OptionInfo(1, "Live preview display period", gr.Slider, {"minimum": -1, "maximum": 32, "step": 1}),
-    "show_progress_type": OptionInfo("Approximate NN", "Live preview method", gr.Radio, {"choices": ["Full VAE", "Approximate NN", "Approximate simple", "TAESD"]}),
+    "show_progress_type": OptionInfo("Approximate", "Live preview method", gr.Radio, {"choices": ["Simple", "Approximate", "TAESD", "Full VAE"]}),
     "live_preview_content": OptionInfo("Combined", "Live preview subject", gr.Radio, {"choices": ["Combined", "Prompt", "Negative prompt"], "visible": False}),
     "live_preview_refresh_period": OptionInfo(500, "Progress update period", gr.Slider, {"minimum": 0, "maximum": 5000, "step": 25}),
     "logmonitor_show": OptionInfo(True, "Show log view"),
@@ -643,8 +493,10 @@ options_templates.update(options_section(('sampler-params', "Sampler Settings"),
     'uni_pc_variant': OptionInfo("bh1", "UniPC variant", gr.Radio, {"choices": ["bh1", "bh2", "vary_coeff"]}),
     'uni_pc_skip_type': OptionInfo("time_uniform", "UniPC skip type", gr.Radio, {"choices": ["time_uniform", "time_quadratic", "logSNR"]}),
     "ddim_discretize": OptionInfo('uniform', "DDIM discretize img2img", gr.Radio, {"choices": ['uniform', 'quad']}),
-    "pad_cond_uncond": OptionInfo(True, "Pad prompt and negative prompt to be same length", gr.Checkbox, {"visible": False}), # TODO implementation missing
-    "batch_cond_uncond": OptionInfo(True, "Do conditional and unconditional denoising in one batch", gr.Checkbox, {"visible": False}), # TODO implementation missing
+    # TODO pad_cond_uncond implementation missing
+    "pad_cond_uncond": OptionInfo(True, "Pad prompt and negative prompt to be same length", gr.Checkbox, {"visible": False}),
+    # TODO batch_cond-uncond implementation missing
+    "batch_cond_uncond": OptionInfo(True, "Do conditional and unconditional denoising in one batch", gr.Checkbox, {"visible": False}),
 }))
 
 options_templates.update(options_section(('postprocessing', "Postprocessing"), {
@@ -720,7 +572,6 @@ options_templates.update(options_section(('extra_networks', "Extra Networks"), {
     "lora_preferred_name": OptionInfo("filename", "LoRA preffered name", gr.Radio, {"choices": ["filename", "alias"]}),
     "lora_add_hashes_to_infotext": OptionInfo(True, "LoRA add hash info"),
     "lora_in_memory_limit": OptionInfo(0, "LoRA memory cache", gr.Slider, {"minimum": 0, "maximum": 10, "step": 1}),
-    "lyco_patch_lora": OptionInfo(False, "Use LyCoris handler for all LoRA types", gr.Checkbox, { "visible": False }),
     "lora_functional": OptionInfo(False, "Use Kohya method for handling multiple LoRA", gr.Checkbox, { "visible": False }),
 
     "sd_hypernetwork": OptionInfo("None", "Add hypernetwork to prompt", gr.Dropdown, { "choices": ["None"], "visible": False }),
@@ -900,9 +751,11 @@ if cmd_opts.backend is None:
 else:
     backend = Backend.DIFFUSERS if cmd_opts.use_openvino or cmd_opts.backend.lower() == 'diffusers' else Backend.ORIGINAL
 opts.data['sd_backend'] = 'diffusers' if backend == Backend.DIFFUSERS else 'original'
+if cmd_opts.use_xformers:
+    opts.data['cross_attention_optimization'] = 'xFormers'
 opts.data['uni_pc_lower_order_final'] = opts.schedulers_use_loworder # compatibility
 opts.data['uni_pc_order'] = opts.schedulers_solver_order # compatibility
-log.info(f'Engine: backend={backend} compute={devices.backend} mode={devices.inference_context.__name__} device={devices.get_optimal_device_name()}')
+log.info(f'Engine: backend={backend} compute={devices.backend} mode={devices.inference_context.__name__} device={devices.get_optimal_device_name()} cross-optimization="{opts.cross_attention_optimization}"')
 log.info(f'Device: {print_dict(devices.get_gpu_info())}')
 
 prompt_styles = modules.styles.StyleDatabase(opts)
@@ -914,45 +767,6 @@ parallel_processing_allowed = not cmd_opts.lowvram
 mem_mon = modules.memmon.MemUsageMonitor("MemMon", devices.device)
 if devices.backend == "directml":
     directml_do_hijack()
-
-
-def reload_gradio_theme(theme_name=None):
-    global gradio_theme # pylint: disable=global-statement
-    if not theme_name:
-        theme_name = opts.gradio_theme
-    default_font_params = {}
-    res = 0
-    try:
-        request = urllib.request.Request("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono", method="HEAD")
-        res = urllib.request.urlopen(request, timeout=3.0).status # pylint: disable=consider-using-with
-    except Exception:
-        res = 0
-    if res != 200:
-        log.info('No internet access detected, using default fonts')
-        default_font_params = {
-            'font':['Helvetica', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-            'font_mono':['IBM Plex Mono', 'ui-monospace', 'Consolas', 'monospace']
-        }
-    if theme_name in list_builtin_themes():
-        gradio_theme = gr.themes.Base(**default_font_params)
-    elif theme_name.startswith("gradio/"):
-        if theme_name == "gradio/default":
-            gradio_theme = gr.themes.Default(**default_font_params)
-        if theme_name == "gradio/base":
-            gradio_theme = gr.themes.Base(**default_font_params)
-        if theme_name == "gradio/glass":
-            gradio_theme = gr.themes.Glass(**default_font_params)
-        if theme_name == "gradio/monochrome":
-            gradio_theme = gr.themes.Monochrome(**default_font_params)
-        if theme_name == "gradio/soft":
-            gradio_theme = gr.themes.Soft(**default_font_params)
-    else:
-        try:
-            gradio_theme = gr.themes.ThemeClass.from_hub(theme_name)
-        except Exception:
-            log.error("Theme download error accessing HuggingFace")
-            gradio_theme = gr.themes.Default(**default_font_params)
-    log.info(f'Loading UI theme: name={theme_name} style={opts.theme_style}')
 
 
 class TotalTQDM: # compatibility with previous global-tqdm
