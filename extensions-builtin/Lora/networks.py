@@ -7,7 +7,6 @@ import network
 import network_lora
 import network_hada
 import network_ia3
-import network_oft
 import network_lokr
 import network_full
 import network_norm
@@ -33,12 +32,10 @@ module_types = [
     network_lora.ModuleTypeLora(),
     network_hada.ModuleTypeHada(),
     network_ia3.ModuleTypeIa3(),
-    network_oft.ModuleTypeOFT(),
     network_lokr.ModuleTypeLokr(),
     network_full.ModuleTypeFull(),
     network_norm.ModuleTypeNorm(),
 ]
-convert_diffusers_name_to_compvis = lora_convert.convert_diffusers_name_to_compvis # supermerger compatibility item
 
 
 def assign_network_names_to_compvis_modules(sd_model):
@@ -381,7 +378,7 @@ def list_available_networks():
     if os.path.exists(shared.cmd_opts.lora_dir):
         candidates += list(shared.walk_files(shared.cmd_opts.lora_dir, allowed_extensions=[".pt", ".ckpt", ".safetensors"]))
     else:
-        shared.log.warning('LoRA directory not found: path="{shared.cmd_opts.lora_dir}"')
+        shared.log.warning('LoRA directory not found: path={shared.cmd_opts.lora_dir}')
     if os.path.exists(shared.cmd_opts.lyco_dir):
         candidates += list(shared.walk_files(shared.cmd_opts.lyco_dir, allowed_extensions=[".pt", ".ckpt", ".safetensors"]))
     for filename in candidates:

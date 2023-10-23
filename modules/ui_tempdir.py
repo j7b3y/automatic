@@ -4,11 +4,10 @@ from collections import namedtuple
 from pathlib import Path
 import gradio as gr
 from PIL import PngImagePlugin
-from modules import shared, errors
+from modules import shared
 
 
 Savedfile = namedtuple("Savedfile", ["name"])
-debug = errors.log.info if os.environ.get('SD_PATH_DEBUG', None) is not None else lambda *args, **kwargs: None
 
 
 def register_tmp_file(gradio, filename):
@@ -46,13 +45,10 @@ def pil_to_temp_file(self, img, dir: str, format="png") -> str: # pylint: disabl
     img.save(filename, pnginfo=gr.processing_utils.get_pil_metadata(img))
     """
     already_saved_as = getattr(img, 'already_saved_as', None)
-    exists = os.path.isfile(already_saved_as) if already_saved_as is not None else False
-    debug(f'Image lookup: {already_saved_as} exists={exists}')
-    if already_saved_as and exists:
+    if already_saved_as and os.path.isfile(already_saved_as):
         register_tmp_file(shared.demo, already_saved_as)
         file_obj = Savedfile(already_saved_as)
         name = file_obj.name
-        debug(f'Image registered: {name}')
         return name
     if shared.opts.temp_dir != "":
         dir = shared.opts.temp_dir
@@ -70,6 +66,7 @@ def pil_to_temp_file(self, img, dir: str, format="png") -> str: # pylint: disabl
 
 
 # override save to file function so that it also writes PNG info
+# gr.processing_utils.save_pil_to_file = save_pil_to_file # gradio <=3.31.0
 gr.components.IOComponent.pil_to_temp_file = pil_to_temp_file      # gradio >=3.32.0
 
 def on_tmpdir_changed():
