@@ -42,6 +42,6 @@
   "schedulers_brownian_noise": false,
   "diffusers_force_inpaint": true,
   "extra_networks_styles": false,
-  "cuda_dtype": "FP16",
-  "sd_backend": "diffusers"
+  "sd_backend": "diffusers",
+  "stream_load": true
 }
