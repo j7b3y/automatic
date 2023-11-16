@@ -1,5 +1,5 @@
 {
-  "clip_skip": 1,
+  "clip_skip": 2,
   "uni_pc_lower_order_final": true,
   "uni_pc_order": 2,
   "styles_dir": "models\\styles",
@@ -17,9 +17,10 @@
     "LMS",
     "DPM 2M",
     "DDIM",
-    "Euler A"
+    "Euler A",
+    "DPM++ 2M"
   ],
-  "gradio_theme": "wayum999/Dark",
+  "gradio_theme": "black-orange",
   "cross_attention_optimization": "Sub-quadratic",
   "quicksettings_list": [
     "sd_model_checkpoint",
@@ -30,7 +31,7 @@
   "grid_format": "png",
   "samples_filename_pattern": "[date]-[prompt_words]",
   "save_to_dirs": true,
-  "directories_filename_pattern": "[spsf<nsfw,nude,fuck,sleep molestation,nipples|sfw|nsfw>]",
+  "directories_filename_pattern": "[spsf<nsfw,nude,fuck,sleep molestation,nipple|sfw|nsfw>]",
   "outdir_txt2img_samples": "outputs\\text",
   "outdir_img2img_samples": "outputs\\image",
   "outdir_extras_samples": "outputs\\extras",
